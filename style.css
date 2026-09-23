@@ -35,6 +35,20 @@ body {
   line-height: 1.6;
 }
 
+/* Watercolor wash behind every page. It stays put while you scroll.
+   The path is relative to this file, so it works on every page.
+   Lower the opacity if text gets hard to read. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: url("Image/Background-image/watercolor-paper-background-4k.jpg") no-repeat center /
+    cover;
+  opacity: 0.15;
+  pointer-events: none;
+}
+
 /* Keeps everything in a readable column in the middle of the page */
 header,
 main,
@@ -94,6 +108,45 @@ h2 {
 
 a {
   color: var(--accent);
+}
+
+/* --- about page --------------------------------------------- */
+
+.profile-photo {
+  display: block;
+  width: 180px;
+  height: 180px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 3px solid var(--line);
+  margin: 0 0 1.5rem;
+}
+
+/* --- art galleries on the home page ------------------------- */
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 1.25rem;
+}
+
+.gallery figure {
+  margin: 0;
+}
+
+.gallery img {
+  display: block;
+  width: 100%;
+  height: 14rem;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+
+.gallery figcaption {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-top: 0.4rem;
 }
 
 /* --- the list of links on the projects pages ----------------- */
