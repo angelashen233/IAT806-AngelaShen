@@ -4,7 +4,7 @@ console.log("Lab03-budgies-Starting-now");
 let frames = []; // my 5 budgie frames
 let sounds = []; // my budgie chirp or pixel sound of a jump
 let bgMusic; // projects\iat-806\lab-03 copy\sounds\freesound_community-budgie-singing-69316.mp3
-let PixelSound; // pixel effect-4, plays when the background changes color
+let PixelSound; // pixel effect-3, plays when the background changes color
 let musicStarted = false; // becomes true after the first click starts the music
 
 // the walking painters: one slot in each array per painter
@@ -20,11 +20,13 @@ let index = 0;
 let soundIndex = 0;
 
 let bgColor;
+//let bgImag; in set up is good
 
 // setup is called once at the start, draw loops every frame.
 async function setup() {
-  let canvas = createCanvas(600, 600);
+  let canvas = createCanvas(700, 500);
   canvas.parent("sketch");
+  bgImag = await loadImage("Images/Budgie-background-figma.png");
   noSmooth(); // keeps the pixel art crisp when it's scaled up
 
   // load the frames with a loop: Images/Budgie_0.png to Budgie_4.png
@@ -83,7 +85,7 @@ function clearScreen() {
 function draw() {
   //constantly running
   background(bgColor);
-
+  image(bgImag, 0, 0, 700, 500);
   // the big click painter sits in the middle, behind everyone else
   image(frames[index], 180, 140, 240, 320);
 
