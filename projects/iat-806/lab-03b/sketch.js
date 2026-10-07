@@ -27,7 +27,7 @@ async function setup() {
   canvas.parent("sketch");
   noSmooth(); // keeps the pixel art crisp when it's scaled up
 
-  // load the frames with a loop: projects\iat-806\lab-03 copy\Images\Budgie_0.jpg
+  // load the frames with a loop: Images/Budgie_0.png to Budgie_4.png
   for (let i = 0; i <= 4; i++) {
     // start from 0, to 4. 5 items.
     frames.push(await loadImage("Images/Budgie_" + i + ".png")); //load and wait
