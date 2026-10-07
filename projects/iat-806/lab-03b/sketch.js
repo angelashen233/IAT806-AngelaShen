@@ -55,11 +55,6 @@ async function setup() {
     },
   );
 
-  // its own copy of effect-3, so it can play at the same time as sounds[1]
-  PixelSound = await loadSound(
-    "sounds/freesound_community-pixel-sound-effect-3-82880.mp3",
-  );
-
   // every starting painter gets plain colors (white tint = no change)
   for (let i = 0; i < xs.length; i++) {
     tints.push(color(255));
@@ -154,7 +149,7 @@ function mousePressed() {
   // fun: disco background, a new color on every click
   // and the pixel effect-4 sound goes off with each new color
   bgColor = color(random(150, 255), random(150, 255), random(150, 255));
-  discoSound.play();
+  PixelSound.play();
 }
 
 function keyPressed() {
@@ -175,7 +170,14 @@ function keyPressed() {
   }
 
   // bonus: 1, 2 or 3 freezes just that one painter (press again to unfreeze)
-  if (key === "1" || key === "2" || key === "3") {
+  if (
+    key === "0" ||
+    key === "1" ||
+    key === "2" ||
+    key === "3" ||
+    key === "4" ||
+    Key === "5"
+  ) {
     let i = int(key) - 1;
     frozen[i] = !frozen[i];
   }
