@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lab 03 — Painting Dancers</title>
+    <link
+      rel="icon"
+      type="image/png"
+      href="../../../Image/Icon/favicon-32.png"
+    />
+    <link rel="apple-touch-icon" href="../../../Image/Icon/favicon-180.png" />
+
+    <!-- This page is three folders deep (projects/iat-806/lab-03/),
+       so the stylesheet is three levels up: ../../../style.css -->
+    <link rel="stylesheet" href="../../../style.css" />
+    <!-- p5.js, version 2.3.3. Every sketch page needs this line. -->
+    <script src="https://cdn.jsdelivr.net/npm/p5@2.3.3/lib/p5.min.js"></script>
+    <!-- p5.sound, the sound add-on. Must come after p5.js and before sketch.js. -->
+    <script src="https://cdn.jsdelivr.net/npm/p5.sound@0.4.1/dist/p5.sound.min.js"></script>
+  </head>
+  <body>
+    <header>
+      <a class="site-name" href="../../../index.html">Angela Shen</a>
+      <nav>
+        <a href="../../../index.html">Home</a>
+        <a href="../../../about.html">About</a>
+        <a href="../../index.html">Projects</a>
+      </nav>
+    </header>
+
+    <main>
+      <a class="back" href="../index.html">&larr; IAT 806</a>
+
+      <h1>Lab 03</h1>
+      <p>
+        My 8-bit self, painting and dancing. <br />
+        Your first left click on the canvas starts the music, "Butterfly Waltz"
+        from StockTune. <br />
+
+        Click the canvas to play a sound, flip the big painter's brush, and drop
+        in a new painter in a random color (the background changes too).
+
+        <br />
+        Press <strong>space</strong> to pause and restart everything,
+        <strong>1</strong>, <strong>2</strong> or <strong>3</strong> to freeze
+        just one of the first three painters, and the
+        <strong>up/down arrows</strong> (or
+        <strong>W</strong>/<strong>S</strong>) to change how fast they walk.
+
+        <strong>Clear screen</strong> removes the painters you added.
+      </p>
+      <div id="sketch"></div>
+    </main>
+
+    <script src="sketch.js"></script>
+
+    <footer>
+      <p><a href="../index.html">&larr; Back to IAT 806</a></p>
+    </footer>
+  </body>
+</html>

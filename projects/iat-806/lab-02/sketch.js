@@ -4,6 +4,7 @@ console.log("Lab02");
 let ballX = 300;
 let ballY = 300;
 let speedX = 4;
+let speedX2 = 8;
 let speedY = 3;
 let size = 80;
 let radius = size / 2;
@@ -86,4 +87,5 @@ function mousePressed() {
   ballX = constrain(mouseX, radius, width - radius);
   ballY = constrain(mouseY, radius, height - radius);
   coinFlip = random([true, false]);
+  //circle(ballX, ballY, size + 100);
 }
