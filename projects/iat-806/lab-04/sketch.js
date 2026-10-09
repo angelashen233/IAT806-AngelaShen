@@ -9,24 +9,48 @@ let musicStarted = false; // becomes true after the first click starts the music
 let muted = false; // the Mute button turns all sound off and on
 let muteButton;
 
-// the walking painters: one slot in each array per painter
-let xs = [0, 100, 150, 200, 400];
-let ys = [30, 80, 100, 230, 440];
-let speeds = [2, 3, 1.5, 3, 4]; //will increase or decrease
-let steps = [0, 0, 0, 0, 0]; // 5 frames, each painter's own frame counter, so one can freeze alone
-let frozen = [false, false, false, false, false]; //whether a frame is frozen
-let tints = []; //colorful budgies
-
-// the larger budgie (real size) that changes pose on every click
-let index = 0;
+// the one budgie in the middle, flapping through its 5 frames
+let step = 0; // counts up every frame, picks which pose to show
+let speed = 1; // how fast the budgie animates, up/down changes it
 let soundIndex = 0;
 
+let numCols = 8;
+// let numRos = 6;
+let numRows = 6;
+let colWidth;
+let rowHeight;
+
+let canvaWidth = 700;
+let canvaHeight = 500;
 let bgColor;
 //let bgImag; in set up is good
 
+let colors = [];
+let speeds = [];
+
+// let name = [
+//   ["Alireza", "Karduni"],
+//   ["Griffin", "Page"],
+//   ["Afrooz", "GHadimi"],
+// ];
+
+// names [0][0] = "Ali;"
+
 // setup is called once at the start, draw loops every frame.
 async function setup() {
-  let canvas = createCanvas(700, 500);
+  let canvas = createCanvas(canvaWidth, canvaHeight);
+  colWidth = width / numCols;
+  rowHeight = height / numRows;
+
+  for (let i = 0; i < numCols; i++) {
+    colors[i] = [];
+    speeds[i] = [];
+    for (let j = 0; j < numRows; j++) {
+      colors[i][j] = [random(1, 255), random(1, 255), random(1, 255)];
+      speeds[i][j] = floor(random(5, 30)); // each budgie flaps at its own pace
+    }
+  }
+
   canvas.parent("sketch");
   bgImag = await loadImage("Images/Budgie-background-figma.png");
   noSmooth(); // keeps the pixel art crisp when it's scaled up
@@ -52,7 +76,7 @@ async function setup() {
     "sounds/freesound_community-pixel-sound-effect-3-82880.mp3",
   );
 
-  // the background tune is a big file, so no await here: the painters start
+  // the background tune is a big file, so no await here: the budgie starts
   // right away and the music is ready a little later. bgMusic stays
   // undefined until then.
   loadSound("sounds/freesound_community-budgie-singing-69316.mp3").then(
@@ -63,19 +87,9 @@ async function setup() {
     },
   );
 
-  // every starting painter gets plain colors (white tint = no change)
-  for (let i = 0; i < xs.length; i++) {
-    tints.push(color(255));
-  }
-
   bgColor = color(80, 80, 80);
 
-  // a button under the canvas that wipes away all the painters I added
-  let clearButton = createButton("Clear budgies");
-  clearButton.parent("sketch");
-  clearButton.mousePressed(clearScreen);
-
-  // a button next to it that turns all the sound off and on
+  // a button under the canvas that turns all the sound off and on
   muteButton = createButton("Mute");
   muteButton.parent("sketch");
   muteButton.mousePressed(toggleMute);
@@ -98,51 +112,55 @@ function toggleMute() {
   }
 }
 
-// back to how it started: only the first 3 painters, yellow background
-function clearScreen() {
-  xs.splice(5);
-  ys.splice(5);
-  speeds.splice(5); //5 frames 5 speeds
-  steps.splice(5);
-  frozen.splice(5);
-  tints.splice(5);
-  bgColor = color(80, 80, 80);
-  redraw(); // so it shows the cleared screen even while paused
-}
-
 function draw() {
   //constantly running
   background(bgColor);
   image(bgImag, 0, 0, 700, 500);
-  // the big click painter sits in the middle, behind everyone else
-  image(frames[index], 180, 140, 240, 320);
 
-  for (let i = 0; i < xs.length; i++) {
-    // a frozen painter doesn't walk or change pose, everyone else keeps going
-    if (!frozen[i]) {
-      //if not frozen
-      xs[i] = xs[i] + speeds[i];
-      steps[i] = steps[i] + 1;
+  // rect(0, 0, colWidth, height);
+  // switch pose every 15 steps so the budgie flaps back and forth
+  step = step + speed;
+
+  let f = floor(step / 15) % frames.length;
+
+  image(frames[f], 180, 140, 240, 320);
+
+  for (let col = 0; col < numCols; col++) {
+    for (let row = 0; row < numRows; row++) {
+      let c = colors[col][row];
+      let w = map(mouseX, 0, width, 15, 80, true);
+      let h = (w * 4) / 3;
+
+      fill(c[0], c[1], c[2], 120); //random(60, 255)
+      rect((col * colWidth) / 2, row * rowHeight, colWidth, rowHeight);
+      animate(
+        speeds[col][row],
+        col * colWidth + 25,
+        row * rowHeight + 20,
+        30,
+        40,
+      );
     }
-
-    // walked off the right side, so come back in from the left
-    if (xs[i] > width) {
-      xs[i] = -96;
-    }
-
-    // switch pose every 15 steps so the brush goes back and forth
-    let f = floor(steps[i] / 15) % frames.length;
-    tint(tints[i]);
-    image(frames[f], xs[i] - 50, ys[i] - 50, 80, 100);
-    noTint();
-
-    animate(2, 50, 50);
   }
+
+  // row of budgies along the top
+  // for (let x = 0; x < canvaWidth; x += 100) {
+  //   for (let y = 0; y < canvaHeight; y += 100) {
+  //     animate(10, x, y, 30, 40); // grid A
+  //     animate(20, x + 50, y + 50, 30, 40); // grid B, shifted half a step
+  //   }
+  // }
+
+  // column of budgies down the left side
+  // for (let y = 0; y < canvaHeight; y += 100) {
+  //   // animate(10, y, y, 30, 40);
+  //   // animate(20, y + 80, y + 80, 30, 40);
+  // }
 
   fill(0);
   noStroke();
   text(
-    "click: new budgie + sound   space: pause all   1-5: freeze one   up/down or w/s: speed",
+    "click: sound + new color   space: pause   up/down or w/s: speed",
     10,
     height - 10,
   );
@@ -153,9 +171,6 @@ function mousePressed() {
   if (mouseX < 0 || mouseX > width || mouseY < 0 || mouseY > height) {
     return;
   }
-
-  // big budgie goes to the next pose
-  index = (index + 1) % frames.length;
 
   // play the next sound, then wrap back to sounds[0] after the last one
   userStartAudio(); // browsers block sound until the user clicks; this switches it on
@@ -173,14 +188,6 @@ function mousePressed() {
   }
   soundIndex = (soundIndex + 1) % sounds.length;
 
-  // fun: a new painter in a random color shows up where I clicked
-  xs.push(mouseX - 48);
-  ys.push(mouseY - 64);
-  speeds.push(random(1, 4));
-  steps.push(0);
-  frozen.push(false);
-  tints.push(color(random(50, 255), random(50, 255), random(50, 255)));
-
   // fun: disco background, a new color on every click
   // and the pixel effect-4 sound goes off with each new color
   bgColor = color(random(150, 255), random(150, 255), random(150, 255));
@@ -192,7 +199,7 @@ function mousePressed() {
 function keyPressed() {
   // space pauses the whole animation, press again to start it
   if (key === " ") {
-    // the music pauses and starts again along with the dancers
+    // the music pauses and starts again along with the budgie
     if (isLooping()) {
       noLoop();
       if (musicStarted) {
@@ -206,25 +213,42 @@ function keyPressed() {
     }
   }
 
-  // bonus: 1 to 5 freezes just that one budgie (press again to unfreeze)
-  if (key === "1" || key === "2" || key === "3" || key === "4" || key === "5") {
-    let i = int(key) - 1;
-    frozen[i] = !frozen[i];
-  }
-
-  // fun: up arrow or w makes everyone walk faster, down arrow or s slower
+  // fun: up arrow or w makes the budgie flap faster, down arrow or s slower
   // (in p5 2.x the arrow keys come through key as "ArrowUp" / "ArrowDown")
   if (key === "ArrowUp" || key === "w" || key === "W") {
-    for (let i = 0; i < speeds.length; i++) {
-      speeds[i] = speeds[i] * 1.5;
-    }
+    speed = speed * 1.5;
   }
   if (key === "ArrowDown" || key === "s" || key === "S") {
-    for (let i = 0; i < speeds.length; i++) {
-      speeds[i] = speeds[i] / 1.5;
-    }
+    speed = speed / 1.5;
   }
 
   // stops the space bar from scrolling the page
   return false;
 }
+
+//class lesson function
+
+//function are collection of code, that simplifys code.
+
+function animate(speed, xPosition, yPosition, imageWidth, imageHeight) {
+  let slowFrame = floor(frameCount / speed);
+  let index = slowFrame % frames.length;
+  let currentFrame = frames[index];
+  let origWidth = currentFrame.width;
+  let origHeight = currentFrame.height;
+
+  // only width given? work out the height so the budgie keeps its shape
+  if (imageWidth && !imageHeight) {
+    let ratio = imageWidth / origWidth;
+    imageHeight = origHeight * ratio;
+  }
+
+  image(currentFrame, xPosition, yPosition, imageWidth, imageHeight);
+}
+
+//learning complexity of function
+// function getFrameIndex(speed) {
+//   let slowFrame = Math.floor(frameCount / speed);
+//   let index = slowFrame % frames.length;
+//   return index; // very very VERY important to return, other wise will be undefined.
+// }
