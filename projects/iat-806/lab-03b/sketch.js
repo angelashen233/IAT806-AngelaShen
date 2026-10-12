@@ -20,6 +20,11 @@ let tints = []; //colorful budgies
 // the larger budgie (real size) that changes pose on every click
 let index = 0;
 let soundIndex = 0;
+let soundFiles = [
+  "freesound_community-budgie-chirps-47596.mp3",
+  "freesound_community-pixel-sound-effect-3-82880.mp3",
+  "freesound_community-pixel-sound-effect-4-82881.mp3",
+];
 
 let bgColor;
 //let bgImag; in set up is good
@@ -38,18 +43,17 @@ async function setup() {
   }
 
   // load the sounds with a loop. MP3
-  let soundFiles = [
-    "freesound_community-budgie-chirps-47596.mp3",
-    "freesound_community-pixel-sound-effect-3-82880.mp3",
-    "freesound_community-pixel-sound-effect-4-82881.mp3",
-  ];
   for (let i = 0; i < soundFiles.length; i++) {
-    sounds.push(await loadSound("sounds/" + soundFiles[i]));
+    loadSound("sounds/" + soundFiles[i]).then((s) => {
+      sounds[i] = s;
+    });
   }
 
   // its own copy of effect-3, so it can play at the same time as sounds[1]
-  PixelSound = await loadSound(
-    "sounds/freesound_community-pixel-sound-effect-3-82880.mp3",
+  loadSound("sounds/freesound_community-pixel-sound-effect-3-82880.mp3").then(
+    (s) => {
+      PixelSound = s;
+    },
   );
 
   // the background tune is a big file, so no await here: the painters start
@@ -135,8 +139,6 @@ function draw() {
     tint(tints[i]);
     image(frames[f], xs[i] - 50, ys[i] - 50, 80, 100);
     noTint();
-
-    animate(2, 50, 50);
   }
 
   fill(0);
@@ -168,10 +170,10 @@ function mousePressed() {
     musicStarted = true;
   }
 
-  if (!muted) {
+  if (!muted && sounds[soundIndex]) {
     sounds[soundIndex].play();
   }
-  soundIndex = (soundIndex + 1) % sounds.length;
+  soundIndex = (soundIndex + 1) % soundFiles.length;
 
   // fun: a new painter in a random color shows up where I clicked
   xs.push(mouseX - 48);
@@ -184,7 +186,7 @@ function mousePressed() {
   // fun: disco background, a new color on every click
   // and the pixel effect-4 sound goes off with each new color
   bgColor = color(random(150, 255), random(150, 255), random(150, 255));
-  if (!muted) {
+  if (!muted && PixelSound) {
     PixelSound.play();
   }
 }

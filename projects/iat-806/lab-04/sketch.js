@@ -13,6 +13,11 @@ let muteButton;
 let step = 0; // counts up every frame, picks which pose to show
 let speed = 1; // how fast the budgie animates, up/down changes it
 let soundIndex = 0;
+let soundFiles = [
+  "freesound_community-budgie-chirps-47596.mp3",
+  "freesound_community-pixel-sound-effect-3-82880.mp3",
+  "freesound_community-pixel-sound-effect-4-82881.mp3",
+];
 
 let numCols = 8;
 // let numRos = 6;
@@ -62,18 +67,17 @@ async function setup() {
   }
 
   // load the sounds with a loop. MP3
-  let soundFiles = [
-    "freesound_community-budgie-chirps-47596.mp3",
-    "freesound_community-pixel-sound-effect-3-82880.mp3",
-    "freesound_community-pixel-sound-effect-4-82881.mp3",
-  ];
   for (let i = 0; i < soundFiles.length; i++) {
-    sounds.push(await loadSound("sounds/" + soundFiles[i]));
+    loadSound("sounds/" + soundFiles[i]).then((s) => {
+      sounds[i] = s;
+    });
   }
 
   // its own copy of effect-3, so it can play at the same time as sounds[1]
-  PixelSound = await loadSound(
-    "sounds/freesound_community-pixel-sound-effect-3-82880.mp3",
+  loadSound("sounds/freesound_community-pixel-sound-effect-3-82880.mp3").then(
+    (s) => {
+      PixelSound = s;
+    },
   );
 
   // the background tune is a big file, so no await here: the budgie starts
@@ -183,15 +187,15 @@ function mousePressed() {
     musicStarted = true;
   }
 
-  if (!muted) {
+  if (!muted && sounds[soundIndex]) {
     sounds[soundIndex].play();
   }
-  soundIndex = (soundIndex + 1) % sounds.length;
+  soundIndex = (soundIndex + 1) % soundFiles.length;
 
   // fun: disco background, a new color on every click
   // and the pixel effect-4 sound goes off with each new color
   bgColor = color(random(150, 255), random(150, 255), random(150, 255));
-  if (!muted) {
+  if (!muted && PixelSound) {
     PixelSound.play();
   }
 }

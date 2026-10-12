@@ -130,6 +130,18 @@ a {
 
 /* --- art galleries on the home page ------------------------- */
 
+/* .gallery and .full-bleed break out of the 44rem column and span
+   the full window width (minus the body's side padding). */
+html {
+  overflow-x: clip; /* hide the scrollbar-width overflow from 100vw */
+}
+
+.gallery,
+.full-bleed {
+  width: calc(100vw - 2.5rem);
+  margin-left: calc(50% - 50vw + 1.25rem);
+}
+
 .gallery {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
@@ -210,6 +222,7 @@ a {
 }
 
 canvas {
+  display: block;
   max-width: 100%;
 }
 

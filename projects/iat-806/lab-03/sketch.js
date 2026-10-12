@@ -18,6 +18,7 @@ let tints = [];
 // the big painter that changes pose on every click
 let index = 0;
 let soundIndex = 0;
+let soundFiles = ["sound0.wav", "sound1.mp3", "sound2.wav", "sound3.wav"];
 
 let bgColor;
 
@@ -34,9 +35,10 @@ async function setup() {
 
   // load the sounds with a loop. They aren't all the same type,
   // sound1.mp3 is "pixel sound effect 4" by freesound_community
-  let soundFiles = ["sound0.wav", "sound1.mp3", "sound2.wav", "sound3.wav"];
   for (let i = 0; i < soundFiles.length; i++) {
-    sounds.push(await loadSound("sounds/" + soundFiles[i]));
+    loadSound("sounds/" + soundFiles[i]).then((s) => {
+      sounds[i] = s;
+    });
   }
 
   // the background tune is a big file, so no await here: the painters start
@@ -49,7 +51,9 @@ async function setup() {
   });
 
   // its own copy of effect-4, so it can play at the same time as sounds[1]
-  discoSound = await loadSound("sounds/sound1.mp3");
+  loadSound("sounds/sound1.mp3").then((s) => {
+    discoSound = s;
+  });
 
   // every starting painter gets plain colors (white tint = no change)
   for (let i = 0; i < xs.length; i++) {
@@ -130,8 +134,10 @@ function mousePressed() {
     musicStarted = true;
   }
 
-  sounds[soundIndex].play();
-  soundIndex = (soundIndex + 1) % sounds.length;
+  if (sounds[soundIndex]) {
+    sounds[soundIndex].play();
+  }
+  soundIndex = (soundIndex + 1) % soundFiles.length;
 
   // fun: a new painter in a random color shows up where I clicked
   xs.push(mouseX - 48);
@@ -144,7 +150,9 @@ function mousePressed() {
   // fun: disco background, a new color on every click
   // and the pixel effect-4 sound goes off with each new color
   bgColor = color(random(150, 255), random(150, 255), random(150, 255));
-  discoSound.play();
+  if (discoSound) {
+    discoSound.play();
+  }
 }
 
 function keyPressed() {
