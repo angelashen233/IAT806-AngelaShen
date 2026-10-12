@@ -28,6 +28,15 @@ let colors = [];
 let target_col = 0;
 let target_row = 0;
 
+let planet_grow = 0; //level 5: 0 = faded away, 1 = fully back.
+
+//level 7: the planet's surface, the pattern grid from sketch copy 2.
+let seed; //same random numbers every frame, so the pattern doesn't flicker.
+let surface_columns = 4;
+let surface_colors = []; //made when level 7 starts, includes your planet's colour.
+let crown_cell = 0; //which square the hidden crown is in.
+let linecolor = "#e4e4e4";
+
 //levels: how I differ the shapes and game experience
 let level_1 = true;
 let level_2 = false;
@@ -150,6 +159,63 @@ function draw() {
     Screen_text(width / 2, height / 2 + 50, "can you click it still?", 10);
   }
 
+  if (level_5 == true) {
+    //how close the mouse is: 1 = right on it, 0 = 250px or more away.
+    let d = dist(mouseX, mouseY, planet_x, planet_y);
+    let closeness = constrain(map(d, 0, 250, 1, 0), 0, 1);
+
+    //staying close slowly brings it back, wandering off lets it fade again.
+    planet_grow += closeness * 0.006 - 0.002;
+    planet_grow = constrain(planet_grow, 0, 1);
+
+    let size = lerp(20, 200, planet_grow);
+    let bob = sin(frameCount * 0.03) * 6; //gentle floating so it feels alive.
+
+    let c = color(planet_color);
+    c.setAlpha(lerp(40, 255, planet_grow)); //see-through when faded, solid when back.
+
+    push(); //keeps the glow from spreading to the text and mouse circle.
+    drawingContext.shadowBlur = lerp(0, 60, closeness);
+    drawingContext.shadowColor = color(planet_color).toString();
+    fill(c);
+    circle(planet_x, planet_y + bob, size);
+    pop();
+
+    Screen_text(width / 2, 80, "What if it disappeared one day?", 24);
+    Screen_text(width / 2, 130, "stay close to bring it back", 10);
+
+    if (planet_grow >= 1) {
+      next_level();
+    }
+  }
+
+  if (level_6 == true) {
+    //the planet is clickable now, so level 6 isn't a dead end.
+    targetObj = { x: width / 2, y: height / 2, size: 200 };
+    push();
+    drawingContext.shadowBlur = 60;
+    drawingContext.shadowColor = color(planet_color).toString();
+    fill(planet_color);
+    circle(width / 2, height / 2 + sin(frameCount * 0.03) * 6, 200);
+    pop();
+    Screen_text(width / 2, height / 2 - 160, "You brought it back.", 24);
+    Screen_text(width / 2, height / 2 + 140, "what's on it? click to land", 10);
+  }
+
+  if (level_7 == true) {
+    randomSeed(seed);
+    push(); //keeps the grid's stroke and glow away from the text.
+    surface_grid(0, 0, surface_columns, ceil(height / (width / surface_columns)), width);
+    pop();
+    Screen_text(width / 2, 60, "You land on its surface.", 24);
+    Screen_text(width / 2, 100, "something is hiding here... find the crown", 10);
+  }
+
+  if (level_8 == true) {
+    //the start of level 8, add the new idea here.
+    Screen_text(width / 2, height / 2, "What do you do next?", 24);
+  }
+
   if (level_4 == true) {
     let colWidth = width / numCols;
     let rowHeight = height / numRows;
@@ -211,6 +277,32 @@ function next_level() {
     level_5 = true;
     //fixed: removed the timer and best_time lines, they were copied from the old game.
     //timer, start_time and best_time don't exist in this file, so it crashed on the last level.
+    //level 5 starts with the planet faded, somewhere away from the middle text.
+    planet_grow = 0;
+    planet_x = random(150, width - 150);
+    planet_y = random(250, height - 150);
+  } else if (level_5) {
+    level_5 = false;
+    level_6 = true;
+  } else if (level_6) {
+    level_6 = false;
+    level_7 = true;
+    //set up the surface: a new pattern, your planet's colour in the palette, and a hidden crown.
+    seed = random(1000);
+    surface_colors = [
+      planet_color,
+      "#8188d4",
+      "#e87171",
+      "#90ee80",
+      "#d881af",
+      "#e4db8a",
+    ];
+    //floor, not ceil: only rows that fit fully on screen, so the crown is never cut off at the bottom.
+    let full_rows = max(1, floor(height / (width / surface_columns)));
+    crown_cell = floor(random(surface_columns * full_rows));
+  } else if (level_7) {
+    level_7 = false;
+    level_8 = true;
   }
   //fixed: removed target_cell = floor(random(grid_column_count * grid_row_count)).
   //also from the old game, none of those exist here, so it crashed on EVERY click.
@@ -258,4 +350,143 @@ function mousePressed() {
   if (hit) {
     next_level(); //fixed: return next_level -> next_level(). without () it doesn't run.
   }
+}
+
+//LEVEL 7: the planet's surface. the grid from sketch copy 2, with a crown hidden in one square.
+function surface_grid(x_start, y_start, column_count, row_count, total_width) {
+  stroke(linecolor);
+  strokeWeight(random(1, 3));
+  drawingContext.shadowBlur = 5;
+  drawingContext.shadowColor = linecolor;
+
+  let cell_size = total_width / column_count;
+  let movement_offset = 0;
+
+  for (let j = 0; j < row_count; j++) {
+    for (let i = 0; i < column_count; i++) {
+      let x = x_start + i * cell_size;
+      let y = y_start + j * cell_size;
+
+      let color_index = floor(random(surface_colors.length));
+      fill(surface_colors[color_index]);
+      rect(x, y, cell_size, cell_size);
+      fill(surface_colors[(color_index + 1) % surface_colors.length]);
+
+      //shapes pulse on their own and swell when the mouse is close.
+      let pulse = map(sin(frameCount * 0.02 + movement_offset), -1, 1, 0, 1);
+      let mouse_distance = dist(mouseX, mouseY, x + cell_size / 2, y + cell_size / 2);
+      let closeness = constrain(map(mouse_distance, 0, cell_size * 2, 1, 0), 0, 1);
+      let movement = map(closeness, 0, 1, 0.3, 1) * map(pulse, 0, 1, 0.6, 1);
+
+      let selector = floor(random(cell_size > 60 ? 6 : 5));
+
+      //the main grid only (not the small split-up ones): is this the crown's square?
+      if (total_width === width && j * column_count + i === crown_cell) {
+        selector = -1;
+        let pad = cell_size * 0.15;
+        let crown_w = cell_size - pad * 2;
+        let crown_h = cell_size * 0.5;
+        let crown_y = y + cell_size * 0.25;
+        simple_crown(x + pad, crown_y, crown_w, crown_h, 5, map(movement, 0, 1, 0.2, 0.6));
+        targetObj = { x: x + pad, y: crown_y, w: crown_w, h: crown_h };
+      }
+
+      if (selector === 0) {
+        let outer_radius = cell_size / 2 - 5;
+        let points_count = [4, 6, 8, 10, 12, 14, 16, 18][floor(random(8))];
+        star(x + cell_size / 2, y + cell_size / 2, outer_radius * movement, outer_radius, points_count, 0);
+      }
+      if (selector === 1) {
+        let diameter = random(cell_size / 2, cell_size) * movement;
+        circle(x + cell_size / 2, y + cell_size / 2, diameter);
+      }
+      if (selector === 2) {
+        let points = [3, 5, 7, 9, 11, 13][floor(random(6))];
+        double_crown(x, y, cell_size, cell_size, points, map(movement, 0, 1, 0.2, 0.8));
+      }
+      if (selector === 3) {
+        axe(x, y, cell_size, cell_size, map(movement, 0, 1, 0.2, 0.8));
+      }
+      if (selector === 4) {
+        rhombus(x, y, cell_size, cell_size, random(0.4, 1) * movement);
+      }
+      if (selector === 5 && cell_size > 60) {
+        surface_grid(x, y, 2, 2, cell_size); //splits this square into 4 smaller ones.
+      }
+
+      movement_offset += 1;
+    }
+  }
+}
+
+function star(x, y, inner_radius, outer_radius, points_count, start_angle) {
+  let step = TWO_PI / points_count;
+  beginShape();
+  for (let i = 0; i < points_count; i++) {
+    let angle = start_angle + step * i;
+    vertex(x + cos(angle) * inner_radius, y + sin(angle) * inner_radius);
+    vertex(x + cos(angle + step / 2) * outer_radius, y + sin(angle + step / 2) * outer_radius);
+  }
+  endShape(CLOSE);
+}
+
+function simple_crown(x, y, shape_width, shape_height, points_count, points_height_ratio) {
+  let points_height = shape_height * points_height_ratio;
+  let points_spacing = shape_width / (points_count - 1);
+  let point_x, point_y;
+  beginShape();
+  for (let i = 0; i < points_count; i++) {
+    point_x = x + i * points_spacing;
+    point_y = y;
+    if (i % 2 != 0) {
+      point_y = y + points_height;
+    }
+    vertex(point_x, point_y);
+  }
+  vertex(x + shape_width, point_y + shape_height);
+  vertex(x, point_y + shape_height);
+  endShape(CLOSE);
+}
+
+function double_crown(x, y, shape_width, shape_height, points_count, points_height_ratio) {
+  let points_height = (shape_height * points_height_ratio) / 2;
+  let points_spacing = shape_width / (points_count - 1);
+  beginShape();
+  for (let i = 0; i < points_count; i++) {
+    let point_y = i % 2 !== 0 ? y + points_height : y;
+    vertex(x + i * points_spacing, point_y);
+  }
+  for (let i = 0; i < points_count; i++) {
+    let point_y = i % 2 !== 0 ? y + shape_height - points_height : y + shape_height;
+    vertex(x + shape_width - i * points_spacing, point_y);
+  }
+  endShape(CLOSE);
+}
+
+function axe(x, y, shape_width, shape_height, prong_width_ratio) {
+  let prong_width = (shape_width * prong_width_ratio) / 2;
+  beginShape();
+  vertex(x, y);
+  vertex(x + prong_width, y + prong_width);
+  vertex(x + prong_width, y);
+  vertex(x + (shape_width - prong_width), y);
+  vertex(x + (shape_width - prong_width), y + prong_width);
+  vertex(x + shape_width, y);
+  vertex(x + shape_width, y + shape_height);
+  vertex(x + (shape_width - prong_width), y + (shape_height - prong_width));
+  vertex(x + (shape_width - prong_width), y + shape_height);
+  vertex(x + prong_width, y + shape_height);
+  vertex(x + prong_width, y + (shape_height - prong_width));
+  vertex(x, y + shape_height);
+  endShape(CLOSE);
+}
+
+function rhombus(x, y, shape_width, shape_height, opening_ratio) {
+  let opening_width = (shape_width * opening_ratio) / 2;
+  beginShape();
+  vertex(x + opening_width, y + shape_height / 2);
+  vertex(x + shape_width / 2, y);
+  vertex(x + (shape_width - opening_width), y + shape_height / 2);
+  vertex(x + shape_width / 2, y + shape_height);
+  endShape(CLOSE);
 }
