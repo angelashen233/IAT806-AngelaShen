@@ -7,8 +7,10 @@ let backgroundColor = "rgb(11, 29, 80)";
 let outlineColor = "rgb(253, 214, 175)";
 let selectedColor = "rgba(143, 226, 9, 0.59)";
 
+
 //targeting an object so I don't have to define the location size each time.
 let targetObj;
+
 //fixed: the planet's x position for level 3. it has to live up here (not inside draw) so it remembers
 //where it was last frame, otherwise it would reset every frame and never move.
 let planet_x = 0;
@@ -17,7 +19,14 @@ let planet_y = 0; //fixed: planet_y was never made, so planet_y += speed_y crash
 //undid the bounce straight away, so the planet could never turn around.
 let speed_x = 2;
 let speed_y = 2;
+let shrink = 0;
 let planet_color = "rgb(47, 79, 216)"; //fixed: the planet's colour is saved here so a bounce can change it and it stays changed.
+
+let numCols = 8;
+let numRows = 6;
+let colors = [];
+let target_col = 0;
+let target_row = 0;
 
 //levels: how I differ the shapes and game experience
 let level_1 = true;
@@ -48,6 +57,13 @@ function setup() {
   const canvas = createCanvas(sketch_holder_width(), windowHeight); // I want this full SCREEN FULL.
 
   canvas.parent("sketch-holder");
+
+  for (let i = 0; i < numCols; i++) {
+    colors[i] = [];
+    for (let j = 0; j < numRows; j++) {
+      colors[i][j] = [random(1, 255), random(1, 255), random(1, 255)];
+    }
+  }
 }
 
 //set up stuff, nothing fun.
@@ -104,6 +120,7 @@ function draw() {
     planet_x += speed_x;
     planet_y += speed_y;
 
+
     //fixed: removed the "restart on the left" part. it fought with the bounce, now the walls turn it around instead.
 
     //fixed: y uses planet_y, it was height / 2 so the planet could never move up or down.
@@ -134,15 +151,45 @@ function draw() {
   }
 
   if (level_4 == true) {
-    targetObj = { x: 5, y: 20, size: 160 };
-    fill(47, 79, 216);
-    circle(targetObj.x, targetObj.y, targetObj.size);
-    Screen_text(width / 2, height / 2, "what if it disappeared one day?", 24);
-    Screen_text(width / 2, height / 2, "what do you do next?", 10);
-  }
+    let colWidth = width / numCols;
+    let rowHeight = height / numRows;
+    let w = map(mouseX, 0, width, 15, 80, true);
 
-  fill(255, 180, 60);
-  circle(mouseX, mouseY, 40);
+    for (let col = 0; col < numCols; col++) {
+      for (let row = 0; row < numRows; row++) {
+        let x = col * colWidth;
+        let y = row * rowHeight;
+
+        if (col === target_col && row === target_row) {
+          //the matching square: painted the same colour as your planet.
+          targetObj = { x: x, y: y, w: colWidth, h: rowHeight };
+          fill(planet_color);
+        } else {
+          let c = colors[col][row];
+          fill(c[0], c[1], c[2]);
+        }
+        rect(x, y, colWidth, rowHeight);
+      }
+    }
+
+    Screen_text(
+      width / 2,
+      height / 2,
+      "Can you remember which planet/object you choose?",
+      24,
+    );
+    Screen_text(width / 2, height / 2 + 50, "match its colour to a square", 10);
+
+    //your planet follows the mouse, so you can hold it up against the squares.
+    stroke(outlineColor);
+    strokeWeight(2);
+    fill(planet_color);
+    circle(mouseX, mouseY, w + 40);
+    noStroke();
+  } else {
+    fill(255, 180, 60);
+    circle(mouseX, mouseY, 40);
+  }
 }
 
 function next_level() {
@@ -157,6 +204,8 @@ function next_level() {
   } else if (level_3) {
     level_3 = false;
     level_4 = true;
+    target_col = floor(random(numCols));
+    target_row = floor(random(numRows));
   } else if (level_4) {
     level_4 = false;
     level_5 = true;
@@ -189,10 +238,24 @@ function mousePressed() {
   //fixed: "mousepressed dis(mouseX, x)" was a syntax error (two things with nothing between), it broke the whole file.
   //fixed: dis -> dist, and it needs 4 numbers: mouse x, mouse y, target x, target y.
   //fixed: <= size / 2 instead of <= 10, so the whole circle counts, not just 10px around the middle.
-  if (
-    targetObj &&
-    dist(mouseX, mouseY, targetObj.x, targetObj.y) <= targetObj.size / 2
-  ) {
+  if (!targetObj) {
+    return;
+  }
+
+  let hit;
+  if (targetObj.w) {
+    //a square target (level 4): is the mouse inside the rectangle?
+    hit =
+      mouseX >= targetObj.x &&
+      mouseX <= targetObj.x + targetObj.w &&
+      mouseY >= targetObj.y &&
+      mouseY <= targetObj.y + targetObj.h;
+  } else {
+    //a circle target (levels 1-3): is the mouse closer than the radius?
+    hit = dist(mouseX, mouseY, targetObj.x, targetObj.y) <= targetObj.size / 2;
+  }
+
+  if (hit) {
     next_level(); //fixed: return next_level -> next_level(). without () it doesn't run.
   }
 }
