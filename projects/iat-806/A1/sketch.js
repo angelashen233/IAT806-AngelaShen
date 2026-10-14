@@ -37,6 +37,14 @@ let surface_colors = []; //made when level 7 starts, includes your planet's colo
 let crown_cell = 0; //which square the hidden crown is in.
 let linecolor = "#e4e4e4";
 
+//from sketch copy 2: the pulse clock, the O freeze, and the timer.
+let time = 0; //the pulse clock, goes up a little every frame (sketch copy 2's "time").
+let wild_speed = 0.02; //how much time goes up each frame. level 8 keeps raising it.
+let all_off = false; //true = O was pressed, the pattern freezes.
+let timer = 0; //how many seconds the whole game took, set when you finish.
+let start_time = 0; //millis() when the game started.
+let best_time = null; //fastest finish ever, saved in the browser. null = never finished yet.
+
 //levels: how I differ the shapes and game experience
 let level_1 = true;
 let level_2 = false;
@@ -73,6 +81,16 @@ function setup() {
       colors[i][j] = [random(1, 255), random(1, 255), random(1, 255)];
     }
   }
+
+  //"a1_best_time" not "best_time", so it doesn't mix with the old game's record on the same website.
+  best_time = getItem("a1_best_time");
+  start_time = millis();
+}
+
+//which level is on, as a number (from sketch copy 2's current_level).
+function current_level() {
+  let levels = [level_1, level_2, level_3, level_4, level_5, level_6, level_7, level_8, level_9];
+  return levels.indexOf(true) + 1;
 }
 
 //set up stuff, nothing fun.
@@ -202,18 +220,59 @@ function draw() {
     Screen_text(width / 2, height / 2 + 140, "what's on it? click to land", 10);
   }
 
-  if (level_7 == true) {
+  if (level_7 == true || level_8 == true) {
+    //the pulse clock stops while O has everything frozen.
+    if (!all_off) {
+      time += wild_speed;
+    }
     randomSeed(seed);
     push(); //keeps the grid's stroke and glow away from the text.
     surface_grid(0, 0, surface_columns, ceil(height / (width / surface_columns)), width);
     pop();
+    fill(0, 150); //dark see-through band, so the text is readable on the pattern.
+    rect(0, 30, width, 90);
+  }
+
+  if (level_7 == true) {
     Screen_text(width / 2, 60, "You land on its surface.", 24);
     Screen_text(width / 2, 100, "something is hiding here... find the crown", 10);
   }
 
   if (level_8 == true) {
-    //the start of level 8, add the new idea here.
-    Screen_text(width / 2, height / 2, "What do you do next?", 24);
+    if (!all_off) {
+      wild_speed = min(wild_speed + 0.0004, 0.6); //faster and faster, up to a limit.
+      Screen_text(width / 2, 60, "It's getting faster... what do you do next?", 24);
+      Screen_text(width / 2, 100, "press O", 10);
+    } else {
+      //frozen: your planet shows up in the middle, click it to finish.
+      targetObj = { x: width / 2, y: height / 2, size: 180 };
+      push();
+      stroke(outlineColor);
+      strokeWeight(3);
+      drawingContext.shadowBlur = 60;
+      drawingContext.shadowColor = color(planet_color).toString();
+      fill(planet_color);
+      circle(targetObj.x, targetObj.y, targetObj.size);
+      pop();
+      Screen_text(width / 2, 60, "It stopped. There it is.", 24);
+      Screen_text(width / 2, 100, "click your planet", 10);
+    }
+  }
+
+  if (level_9 == true) {
+    //the ending, with the timer from sketch copy 2.
+    push();
+    drawingContext.shadowBlur = 60;
+    drawingContext.shadowColor = color(planet_color).toString();
+    fill(planet_color);
+    circle(width / 2, height / 2 + sin(frameCount * 0.03) * 6, 200);
+    pop();
+    Screen_text(width / 2, height / 2 - 170, "You stayed.", 24);
+    let time_text = "Your time: " + nf(timer, 0, 1) + "s";
+    if (best_time !== null) {
+      time_text += "   Best: " + nf(best_time, 0, 1) + "s";
+    }
+    Screen_text(width / 2, height / 2 + 160, time_text, 14);
   }
 
   if (level_4 == true) {
@@ -255,6 +314,12 @@ function draw() {
   } else {
     fill(255, 180, 60);
     circle(mouseX, mouseY, 40);
+  }
+
+  //bottom right: level name and time, like sketch copy 2. drawn last so nothing covers it.
+  if (!level_9) {
+    let corner = level_names[current_level() - 1] + "   " + nf((millis() - start_time) / 1000, 0, 1) + "s";
+    Screen_text(width - 170, height - 30, corner, 12);
   }
 }
 
@@ -303,6 +368,18 @@ function next_level() {
   } else if (level_7) {
     level_7 = false;
     level_8 = true;
+    seed = random(1000); //a new pattern for level 8.
+    wild_speed = 0.02;
+    all_off = false;
+  } else if (level_8) {
+    level_8 = false;
+    level_9 = true;
+    //the end: stop the clock and save it if it's a new record (from sketch copy 2).
+    timer = (millis() - start_time) / 1000;
+    if (best_time === null || timer < best_time) {
+      best_time = timer;
+      storeItem("a1_best_time", best_time);
+    }
   }
   //fixed: removed target_cell = floor(random(grid_column_count * grid_row_count)).
   //also from the old game, none of those exist here, so it crashed on EVERY click.
@@ -352,6 +429,13 @@ function mousePressed() {
   }
 }
 
+//O freezes and unfreezes the pattern (sketch copy 2's keyPressed).
+function keyPressed() {
+  if (key === "o" || key === "O") {
+    all_off = !all_off;
+  }
+}
+
 //LEVEL 7: the planet's surface. the grid from sketch copy 2, with a crown hidden in one square.
 function surface_grid(x_start, y_start, column_count, row_count, total_width) {
   stroke(linecolor);
@@ -373,15 +457,20 @@ function surface_grid(x_start, y_start, column_count, row_count, total_width) {
       fill(surface_colors[(color_index + 1) % surface_colors.length]);
 
       //shapes pulse on their own and swell when the mouse is close.
-      let pulse = map(sin(frameCount * 0.02 + movement_offset), -1, 1, 0, 1);
+      let pulse = map(sin(time + movement_offset), -1, 1, 0, 1);
       let mouse_distance = dist(mouseX, mouseY, x + cell_size / 2, y + cell_size / 2);
       let closeness = constrain(map(mouse_distance, 0, cell_size * 2, 1, 0), 0, 1);
-      let movement = map(closeness, 0, 1, 0.3, 1) * map(pulse, 0, 1, 0.6, 1);
+      let movement;
+      if (all_off) {
+        movement = 0.5; //O is on: every shape stays still halfway.
+      } else {
+        movement = map(closeness, 0, 1, 0.3, 1) * map(pulse, 0, 1, 0.6, 1);
+      }
 
       let selector = floor(random(cell_size > 60 ? 6 : 5));
 
-      //the main grid only (not the small split-up ones): is this the crown's square?
-      if (total_width === width && j * column_count + i === crown_cell) {
+      //the main grid only (not the small split-up ones): is this the crown's square? (level 7 only)
+      if (level_7 && total_width === width && j * column_count + i === crown_cell) {
         selector = -1;
         let pad = cell_size * 0.15;
         let crown_w = cell_size - pad * 2;

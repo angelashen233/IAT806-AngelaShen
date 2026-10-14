@@ -1,0 +1,26 @@
+{
+  "folders": [
+	{
+		"name": "IAT-804",
+		"path": "../../IAT-804"
+	},
+	{
+		"name": "antle-review-overleaf",
+		"path": "../../../../Downloads/antle-review-overleaf"
+	}
+],
+  "settings": {
+    "files.exclude": {
+      "**/.git": true,
+      "**/.svn": true,
+      "**/.hg": true,
+      "**/.jj": true,
+      "**/.DS_Store": true,
+      "**/Thumbs.db": true,
+      "**/c:\\Users\\Angela_Shen\\Documents\\GitHub\\IAT-804\\good-bad-ugly-methods-CHI.aux": true,
+      "**/c:\\Users\\Angela_Shen\\Documents\\GitHub\\IAT-804\\good-bad-ugly-methods-CHI.log": true,
+      "**/c:\\Users\\Angela_Shen\\Documents\\GitHub\\IAT-804\\good-bad-ugly-methods-CHI.gz": true,
+      "**/c:\\Users\\Angela_Shen\\Documents\\GitHub\\IAT-804\\good-bad-ugly-methods-CHI.out": true
+    }
+  }
+}

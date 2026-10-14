@@ -136,7 +136,7 @@ function draw() {
       let h = (w * 4) / 3;
 
       fill(c[0], c[1], c[2], 120); //random(60, 255)
-      rect((col * colWidth) / 2, row * rowHeight, colWidth, rowHeight);
+      rect(col * colWidth, row * rowHeight, colWidth, rowHeight);
       animate(
         speeds[col][row],
         col * colWidth + 25,
