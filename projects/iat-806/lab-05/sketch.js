@@ -12,6 +12,8 @@ let maxBalls = 150; //stops making babies here, so the reaction can't freeze the
 let restFrames = 60; //after making a baby, a ball has to wait this many frames (1 second) to make another.
 let maxBounces = 8; //after this many wall bounces, a ball starts to fade away (decay).
 let fadeSpeed = 3; //how much see-through it gets each frame. 255 / 3 = about 85 frames (1.5 seconds) to vanish.
+let moonLighten = 40; //percent: how much lighter and less saturated the 2 small circles are than their ball. 0 = same colour, 100 = white.
+let gridSize = 30; //how many pixels apart the background grid lines are.
 let explosionSound; //stays undefined until the mp3 has loaded.
 
 //one of each class, made in setup().
@@ -118,10 +120,11 @@ class Game {
     this.flashes = [];
 
     for (let i = 0; i < numberOfBalls; i++) {
-      let ballR = random(15, 30);
-      let ballX = random(reactor.left + ballR, reactor.right - ballR);
-      let ballY = random(reactor.top + ballR, reactor.bottom - ballR);
-      this.balls.push(new Ball(ballX, ballY, pickColor(i), ballR)); //put smth inside of the array
+      let ball = new Ball(0, 0, pickColor(i), random(15, 30));
+      //placed using reach(), so the two small circles start inside the walls too.
+      ball.x = random(reactor.left + ball.reach(), reactor.right - ball.reach());
+      ball.y = random(reactor.top + ball.reach(), reactor.bottom - ball.reach());
+      this.balls.push(ball); //put smth inside of the array
     }
     this.startCount = this.balls.length;
   }
@@ -279,7 +282,9 @@ class Game {
       return;
     }
 
-    background(lerpColor(color(253, 253, 251), color(200, 20, 20), this.heat()));
+    //black at the start, getting redder as the reaction grows.
+    background(lerpColor(color(0), color(200, 20, 20), this.heat()));
+    this.showGrid();
     reactor.show();
 
     for (let ball of this.balls) {
@@ -325,10 +330,24 @@ class Game {
     }
   }
 
+  //light see-through lines every gridSize pixels, across the whole canvas.
+  showGrid() {
+    push();
+    stroke(255, 35);
+    strokeWeight(1);
+    for (let x = 0; x <= width; x += gridSize) {
+      line(x, 0, x, height); //up and down lines
+    }
+    for (let y = 0; y <= height; y += gridSize) {
+      line(0, y, width, y); //side to side lines
+    }
+    pop();
+  }
+
   smallText(words, y) {
     push();
     noStroke();
-    fill(0);
+    fill(240); //light text, so it shows on the black background.
     textAlign(CENTER, CENTER);
     textSize(16);
     text(words, width / 2, y);
@@ -366,7 +385,7 @@ class Reactor {
   show() {
     push();
     noFill();
-    stroke(0);
+    stroke(240); //light wall, so it shows on the black background.
     strokeWeight(3);
     rect(this.left, this.top, this.right - this.left, this.bottom - this.top);
     pop();
@@ -385,6 +404,19 @@ class Ball {
     this.rest = 0; //frames left before this ball can make another baby. 0 = ready.
     this.bounces = 0; //how many times it has hit the reactor wall.
     this.alpha = 255; //255 = solid, 0 = gone.
+    this.orbit = 50; //how far the two small circles sit from the centre of the ball.
+    this.angle = random(TWO_PI); //where the small circles are on their circle right now. random, so they don't all line up.
+    this.spin = random(0.02, 0.06) * random([-1, 1]); //how fast they go around. -1 = the other way round.
+    //how wide the small circles are, compared to r. half the balls get the normal size, half get smaller ones.
+    this.moonSize = random([0.5, 0.3]);
+  }
+
+  //how far the ball reaches from its centre, counting the two small circles.
+  //they go all the way around, so this is the furthest they can ever be in any direction.
+  //a small circle is r * moonSize wide, so its edge is half of that past its own middle.
+  //whichever sticks out more (the big ball or a small circle) is what touches the wall first.
+  reach() {
+    return max(this.r, this.orbit + (this.r * this.moonSize) / 2);
   }
 
   //true once it has bounced maxBounces times and started to decay.
@@ -399,26 +431,38 @@ class Ball {
     fill(c); // (120, 130, 140);
     stroke(0, this.alpha); //the outline fades too, so no empty ring is left behind.
     circle(this.x, this.y, this.r * 2);
-    circle(this.x - 50, this.y - 50, this.r * 0.5);
-    circle(this.x + 50, this.y + 50, this.r * 0.5);
+
+    //the small circles: the ball's colour mixed moonLighten% of the way to white, so a lighter, softer shade.
+    let moon = lerpColor(color(this.color), color(255), moonLighten / 100);
+    moon.setAlpha(this.alpha);
+    fill(moon);
+    //cos and sin turn the angle into a spot on a circle orbit pixels away from the ball.
+    //the second one uses minus, so the two are always on opposite sides.
+    let moonX = cos(this.angle) * this.orbit;
+    let moonY = sin(this.angle) * this.orbit;
+    circle(this.x + moonX, this.y + moonY, this.r * this.moonSize);
+    circle(this.x - moonX, this.y - moonY, this.r * this.moonSize);
   }
 
   move() {
+    this.angle += this.spin; //turns the small circles a little every frame.
+
     this.x += random(mouseX / 100, 5) * this.dirX;
     this.y += random(mouseY / 100, 5) * this.dirY;
 
-    //bounces off the reactor frame instead of the canvas edge.
-    if (this.x + this.r >= reactor.right || this.x - this.r <= reactor.left) {
+    //bounces off the reactor frame when the outside of the small circles touches it, not just the big ball.
+    let reach = this.reach();
+    if (this.x + reach >= reactor.right || this.x - reach <= reactor.left) {
       this.dirX *= -1;
       this.bounces += 1;
     }
-    if (this.y + this.r >= reactor.bottom || this.y - this.r <= reactor.top) {
+    if (this.y + reach >= reactor.bottom || this.y - reach <= reactor.top) {
       this.dirY *= -1;
       this.bounces += 1;
     }
-    //keeps it inside the frame. a baby born half in a wall would otherwise flip every frame and get stuck.
-    this.x = constrain(this.x, reactor.left + this.r, reactor.right - this.r);
-    this.y = constrain(this.y, reactor.top + this.r, reactor.bottom - this.r);
+    //keeps it all inside the frame. a baby born half in a wall would otherwise flip every frame and get stuck.
+    this.x = constrain(this.x, reactor.left + reach, reactor.right - reach);
+    this.y = constrain(this.y, reactor.top + reach, reactor.bottom - reach);
 
     if (this.rest > 0) {
       this.rest -= 1;
@@ -491,7 +535,7 @@ class Bucket {
   show(x, y) {
     push();
     translate(x, y); //(0, 0) is now the mouse, so the shapes below are drawn around it.
-    stroke(60);
+    stroke(200); //light outline, so the handle shows on the black background.
     strokeWeight(2);
     noFill();
     arc(0, -15, 44, 36, PI, TWO_PI); //the handle
@@ -542,14 +586,14 @@ class SpeedBar {
 
     push();
     noStroke();
-    fill(0, 40);
+    fill(255, 50);
     rect(reactor.left, barY - 4, barW, 8, 4); //the empty bar
     //colour goes from blue (slow) to orange (fast) as the mouse moves right.
     fill(lerpColor(color(47, 79, 216), color(255, 180, 60), filled / barW));
     rect(reactor.left, barY - 4, filled, 8, 4); //the filled part, up to the mouse
     circle(reactor.left + filled, barY, 14); //a knob at the end of the fill
 
-    fill(0);
+    fill(240);
     textSize(12);
     textAlign(CENTER, CENTER);
     text("slow", reactor.left / 2, barY);
