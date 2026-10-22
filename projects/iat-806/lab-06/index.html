@@ -25,6 +25,8 @@
     <script src="https://cdn.jsdelivr.net/npm/p5@2.3.3/lib/p5.min.js"></script>
     <!-- p5.sound, for the explosion sound. Same version as lab-04. -->
     <script src="https://cdn.jsdelivr.net/npm/p5.sound@0.4.1/dist/p5.sound.min.js"></script>
+    <!-- ml5.js: body segmentation, hand tracking and the sign classifier. Has to come after p5. -->
+    <script src="https://unpkg.com/ml5@1.4.0/dist/ml5.js"></script>
 
     <!-- Your code. Keep this line last. -->
     <script src="sketch.js"></script>
@@ -49,7 +51,7 @@
       </p>
 
       <!-- The canvas p5 creates gets placed right here. -->
-      <div id="sketch-holder"></div>
+      <div id="sketch-holder" class="full-bleed"></div>
 
       <h2>Notes</h2>
       <p>

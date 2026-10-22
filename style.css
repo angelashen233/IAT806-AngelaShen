@@ -77,10 +77,16 @@ header .site-name {
   margin-right: auto;
 }
 
+/* gap puts space only between the links, so on a phone (where the
+   nav wraps under the name) "Home" starts flush with the left edge. */
+header nav {
+  display: flex;
+  gap: 1.25rem;
+}
+
 header nav a {
   color: var(--muted);
   text-decoration: none;
-  margin-left: 1.25rem;
 }
 
 header nav a:hover {
@@ -142,14 +148,29 @@ html {
   margin-left: calc(50% - 50vw + 1.25rem);
 }
 
+/* Columns are 15rem to 21.375rem wide and the whole row is centred.
+   Two of them plus the 1.25rem gap make exactly 44rem, so a two-image
+   gallery lines up with the edges of the text column above it. */
 .gallery {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 21.375rem));
+  justify-content: center;
   gap: 1.25rem;
+}
+
+/* Too narrow for two columns: one column, the full width of the text. */
+@media (max-width: 34rem) {
+  .gallery {
+    grid-template-columns: 1fr;
+  }
 }
 
 .gallery figure {
   margin: 0;
+}
+
+.gallery a {
+  display: block;
 }
 
 .gallery img {
@@ -159,6 +180,13 @@ html {
   object-fit: cover;
   border-radius: 10px;
   border: 1px solid var(--line);
+}
+
+/* Tall images (storyboard, diagram): a taller frame that shows the
+   top of the image instead of a slice from the middle. */
+.gallery.tall img {
+  height: 32rem;
+  object-position: top;
 }
 
 .gallery figcaption {

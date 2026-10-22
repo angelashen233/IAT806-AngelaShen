@@ -1,603 +1,441 @@
-// An example sketch, so the page has something to show.
-// Delete all of this and write your own.
+// lab 06: a full screen of pulsing balls that react to your body and your hands.
+// - each ball sits in its own spot on a grid, wobbles around it a little, and pulses 5 pixels bigger and smaller.
+// - the webcam finds your body, and the balls on top of you turn red. click a ball to turn it red too.
+// - *change* hand gesture recognition: teach it letters from the ASL alphabet (fingerspelling),
+//   then it shows which letter your hand is making.
+//
+// REFERENCES
+// body segmentation: ml5.js example "bodySegmentation-mask-person", https://editor.p5js.org/ml5/sketches/h6TN8umP5
+// *change* hand tracking and the sign classifier: ml5.js handPose and neuralNetwork, https://ml5js.org/
+// ml5.js license and Code of Conduct: https://github.com/ml5js/ml5-next-gen/blob/main/LICENSE.md
 
-//let xPostion = [100, 200, 300];
+//settings: change these to see what happens.
+let spacing = 20; //how many pixels apart the balls' spots are. smaller = more balls.
+let pulseAmount = 5; //how many pixels bigger and smaller each ball gets as it pulses.
+let wander = 4; //how many pixels a ball can drift away from its spot.
 
-let myBall;
-let myBall2;
+let myBalls = [];
 
-//settings: change these numbers to make the game easier or harder.
-let numberOfBalls = 5; //how many balls each round starts with.
-let maxBalls = 150; //stops making babies here, so the reaction can't freeze the browser.
-let restFrames = 60; //after making a baby, a ball has to wait this many frames (1 second) to make another.
-let maxBounces = 8; //after this many wall bounces, a ball starts to fade away (decay).
-let fadeSpeed = 3; //how much see-through it gets each frame. 255 / 3 = about 85 frames (1.5 seconds) to vanish.
-let moonLighten = 40; //percent: how much lighter and less saturated the 2 small circles are than their ball. 0 = same colour, 100 = white.
-let gridSize = 30; //how many pixels apart the background grid lines are.
-let explosionSound; //stays undefined until the mp3 has loaded.
+//the pause button: stops the pulsing and the wobbling, press again to start them.
+let paused = false;
+let pauseButton;
+let pulseTime = 0; //the pulse clock. it only counts up while not paused, so the balls freeze mid-pulse.
 
-//one of each class, made in setup().
-let game; //runs the levels: what's on screen, who won, what space and clicks do.
-let reactor; //the frame the balls bounce inside.
-let bucket; //level 1: the mouse is a bucket of water.
-let neutronGun; //level 2: the mouse fires neutrons that add new atoms.
-let speedBar; //the slow / fast bar along the bottom.
+//body segmentation
+let bodySegmentation;
+let video;
+let segmentation;
+
+let options = {
+  //with "person", ml5 makes the person see-through and the room solid in the mask.
+  maskType: "person",
+};
+
+//*change* hand gesture recognition
+let handPose; //the hand tracking model. finds 21 points on your hand: wrist, knuckles, fingertips.
+let hands = []; //the hands it found in the latest camera frame.
+let signModel; //a small neural network that learns which hand shape is which letter.
+let sampleCounts = {}; //how many examples you've saved for each letter, like { A: 60, B: 55 }.
+let trainingRounds = 50; //how many times it practises on your examples. more = slower but often better.
+let trainingRound = 0; //which round it's on while training.
+let modelState = "collecting"; //"collecting" (saving examples), "training", or "ready" (recognising).
+let prediction = null; //its latest guess, like { label: "A", confidence: 0.93 }.
+let classifying = false; //true while it's busy guessing, so it doesn't start a second guess on top.
 
 function setup() {
-  const canvas = createCanvas(600, 600);
+  const canvas = createCanvas(sketch_holder_width(), windowHeight); //full width of the page, full height of the window.
 
   // Puts the canvas inside the <div id="sketch-holder"> in index.html,
   // instead of dropping it at the bottom of the page.
-  let x = 50;
-  let y = 100;
-  let c = random([color(120, 130, 140), color(50, 50, 50)]);
-  let r = random(50, 400);
-  //yBall = Ball();
-  myBall = new Ball(x, y, c, r);
-  myBall2 = new Ball(x, y, c, r);
   canvas.parent("sketch-holder");
 
-  reactor = new Reactor(60);
-  bucket = new Bucket(25);
-  neutronGun = new NeutronGun();
-  speedBar = new SpeedBar();
-  noCursor(); //hides the arrow, the bucket or the neutron gun is drawn there instead.
+  //the button sits on top of the canvas's top-left corner, so it's on screen even though the canvas fills the window.
+  select("#sketch-holder").style("position", "relative"); //makes position() below measure from the holder's corner.
+  pauseButton = createButton("Pause");
+  pauseButton.parent("sketch-holder");
+  pauseButton.position(16, 16);
+  pauseButton.mousePressed(togglePause);
 
-  //no await, so the balls show up right away and the sound is ready a little later (like lab-04's music).
-  loadSound("soundreality-explosion-fx-343683.mp3").then((s) => {
-    explosionSound = s;
-  });
+  makeBalls();
+  newSignModel(); //*change*
 
-  game = new Game();
-  game.newRound(1);
+  //no await here: setup() finishes right away, so the balls start straight away.
+  //(in p5 2.x, an async setup() makes draw() wait for the whole model download.)
+  startCamera();
 }
 
+//turns on the camera, then loads the models and starts them watching it.
+async function startCamera() {
+  video = createCapture(VIDEO);
+  video.hide(); //draw() draws it instead, scaled to fill the canvas.
+
+  bodySegmentation = await ml5.bodySegmentation("SelfieSegmentation", options);
+  bodySegmentation.detectStart(video, gotResults);
+
+  //*change* hand tracking, on the same camera. one hand is enough for fingerspelling.
+  handPose = await ml5.handPose({ maxHands: 1 });
+  handPose.detectStart(video, gotHands);
+}
+
+// how wide the sketch-holder div is, in pixels
+function sketch_holder_width() {
+  return document.getElementById("sketch-holder").clientWidth;
+}
+
+// keeps the canvas full size when the window changes size, and fills the new space with balls.
+function windowResized() {
+  resizeCanvas(sketch_holder_width(), windowHeight);
+  makeBalls();
+}
+
+//a random colour somewhere between blue and purple.
+function bluePurple() {
+  let blue = color(40, 90, 230);
+  let purple = color(150, 60, 220);
+  return lerpColor(blue, purple, random(1)); //random(1) = how far along from blue to purple, 0 to 1.
+}
+
+//fills the whole canvas with balls, one every spacing pixels across and down.
+function makeBalls() {
+  myBalls = [];
+  for (let x = spacing / 2; x < width; x += spacing) {
+    for (let y = spacing / 2; y < height; y += spacing) {
+      myBalls.push(new Ball(x, y, random(8, 14), bluePurple())); //put smth inside of the array
+    }
+  }
+}
+
+//how much the video is scaled up and where it starts, so it covers the canvas without squishing.
+//whichever side needs to grow more decides how much, and the extra is cut off the edges.
+//the video, the balls and the hand points all use this, so they line up.
+function videoFit() {
+  let scale = max(width / video.width, height / video.height);
+  let offsetX = (width - video.width * scale) / 2;
+  let offsetY = (height - video.height * scale) / 2;
+  return { scale: scale, offsetX: offsetX, offsetY: offsetY };
+}
+
+//order: the masked video first, then the balls on top of it, then the hand and the sign text on top of everything.
 function draw() {
-  game.update();
-  game.show();
+  //background(0);
 
-  // myBall.move();
-  // myBall.show();
-  // myBall2.show();
-
-  // noStroke();
-  // fill(47, 79, 216);
-  // // circle(width / 2, height / 2, 160);
-  // // circle(width / 2, height / 2, 160);
-  // // circle(width / 2, height / 2, 160);
-  // fill(255, 180, 60);
-  // circle(mouseX, mouseY, 40);
-
-  // for (i = 0; i < 5; i++) {
-  //   circle(50 + i * 100, height / 2, mouseX);
-  // }
-}
-
-function keyPressed() {
-  if (key === " ") {
-    game.space();
+  if (!paused) {
+    pulseTime += 1;
   }
 
-  return false; //stops the space bar from scrolling the page.
-}
-
-function mousePressed() {
-  // ignore clicks on the page that aren't on the canvas (same check as lab-04)
-  if (mouseX < 0 || mouseX > width || mouseY < 0 || mouseY > height) {
-    return;
-  }
-  game.click();
-}
-
-//every other ball: one from the blue / orange / grey list, then one fully random colour.
-function pickColor(i) {
-  if (i % 2 === 0) {
-    return random([color(47, 79, 216), color(255, 180, 60), color(120, 130, 140)]);
-  }
-  return color(random(255), random(255), random(255));
-}
-
-//THE GAME: 2 levels.
-//level 1: the reaction is dangerous. use the water bucket to put every atom out before it explodes.
-//level 2: now do the opposite. fire neutrons to keep the reaction going until it explodes.
-//state is one of: "waiting" (before the click), "running", "won", "lost".
-class Game {
-  constructor() {
-    this.level = 1;
-    this.state = "waiting";
-    this.exploded = false; //true while the white BOOM screen is showing.
-    this.balls = [];
-    this.flashes = [];
-    this.startCount = 0; //how many balls this round began with, so the red counts from there.
+  let fit;
+  if (segmentation) {
+    fit = videoFit();
+    segmentation.mask.loadPixels(); //once per frame, so every ball can read the mask quickly.
+    video.mask(segmentation.mask);
+    image(video, fit.offsetX, fit.offsetY, video.width * fit.scale, video.height * fit.scale);
   }
 
-  //clears everything and puts numberOfBalls calm balls in the reactor, waiting for a click.
-  newRound(level) {
-    this.level = level;
-    this.state = "waiting";
-    this.exploded = false;
-    this.balls = [];
-    this.flashes = [];
-
-    for (let i = 0; i < numberOfBalls; i++) {
-      let ball = new Ball(0, 0, pickColor(i), random(15, 30));
-      //placed using reach(), so the two small circles start inside the walls too.
-      ball.x = random(reactor.left + ball.reach(), reactor.right - ball.reach());
-      ball.y = random(reactor.top + ball.reach(), reactor.bottom - ball.reach());
-      this.balls.push(ball); //put smth inside of the array
+  for (let ball of myBalls) {
+    if (segmentation) {
+      ball.onBody = ball.isOnBody(segmentation.mask, fit.scale, fit.offsetX, fit.offsetY);
     }
-    this.startCount = this.balls.length;
-  }
-
-  //0 = normal, 1 = fully red. one step redder for every 10 balls born after the start.
-  heat() {
-    let redSteps = floor((this.balls.length - this.startCount) / 10);
-    let maxSteps = floor((maxBalls - this.startCount) / 10); //how many steps until it explodes.
-    return constrain(redSteps / maxSteps, 0, 1);
-  }
-
-  //the moving part, once every frame. only does anything while the reaction is running.
-  update() {
-    if (this.state !== "running") {
-      return;
-    }
-
-    for (let ball of this.balls) {
+    if (!paused) {
       ball.move();
     }
-    this.nuclearFusion();
-    if (this.level === 1) {
-      bucket.pour(this);
-    }
-    this.decay();
-
-    //how the round ends:
-    //fully red = explosion. that's losing on level 1 and winning on level 2.
-    //no atoms left = the reaction stopped. that's winning on level 1 and losing on level 2.
-    if (this.heat() >= 1) {
-      this.explode();
-    } else if (this.balls.length === 0) {
-      if (this.level === 1) {
-        this.state = "won";
-      } else {
-        this.state = "lost";
-      }
-    }
+    ball.update(); //every frame, the ball checks if it's clicked or on the person, and picks its colour.
+    ball.show();
   }
 
-  //NUCLEAR FUSION: the reaction itself.
-  //1. checks every pair of balls to see if they touch.
-  //2. touching balls bounce apart.
-  //3. if both are rested, not decaying, and there's room (under maxBalls), they fuse: a baby is born
-  //   between them, with half of each parent's colour, a bit smaller, and an orange flash ring.
-  nuclearFusion() {
-    let babies = []; //new balls wait here, so the loop isn't checking balls that were just born.
+  //*change* hand gesture recognition
+  collectSample();
+  guessSign();
+  drawHand();
+  drawSignPanel();
+}
 
-    for (let i = 0; i < this.balls.length; i++) {
-      //j starts at i + 1, so each pair is only checked once (a with b, never b with a again).
-      for (let j = i + 1; j < this.balls.length; j++) {
-        let a = this.balls[i];
-        let b = this.balls[j];
+// callback function for body segmentation: ml5 calls this with each new mask.
+function gotResults(result) {
+  segmentation = result;
+}
 
-        //touching = the middles are closer than the two radiuses added together.
-        if (dist(a.x, a.y, b.x, b.y) <= a.r + b.r) {
-          a.bounceAwayFrom(b);
-          b.bounceAwayFrom(a);
-
-          //fading balls are decaying, so they can't fuse any more. they still bounce.
-          let rested = a.rest === 0 && b.rest === 0 && !a.fading() && !b.fading();
-          let room = this.balls.length + babies.length < maxBalls;
-          if (rested && room) {
-            let babyX = (a.x + b.x) / 2;
-            let babyY = (a.y + b.y) / 2;
-            let babyColor = lerpColor(a.color, b.color, 0.5); //half of each parent's colour.
-            let babyR = max(8, ((a.r + b.r) / 2) * 0.8); //a bit smaller than its parents.
-            let baby = new Ball(babyX, babyY, babyColor, babyR);
-
-            a.rest = restFrames;
-            b.rest = restFrames;
-            baby.rest = restFrames; //so the baby doesn't instantly fuse with its own parents.
-            babies.push(baby);
-            this.flashes.push(new Flash(babyX, babyY, [255, 180, 60]));
-          }
-        }
-      }
-    }
-
-    for (let baby of babies) {
-      this.balls.push(baby);
-    }
-  }
-
-  //takes away every ball that has faded all the way out.
-  decay() {
-    //going backwards, so removing a ball doesn't skip the next one.
-    for (let i = this.balls.length - 1; i >= 0; i--) {
-      if (this.balls[i].alpha <= 0) {
-        this.balls.splice(i, 1);
-      }
-    }
-  }
-
-  //completely red: the sound plays once and all the atoms are gone.
-  explode() {
-    this.exploded = true;
-    this.balls = [];
-    this.flashes = [];
-    if (this.level === 2) {
-      this.state = "won";
-    } else {
-      this.state = "lost";
-    }
-    if (explosionSound) {
-      explosionSound.play();
-    }
-  }
-
-  //space: after a win, go to the other level. any other time, restart this level.
-  space() {
-    if (this.state === "won") {
-      if (this.level === 1) {
-        this.newRound(2);
-      } else {
-        this.newRound(1); //beat level 2, so it starts over from the beginning.
-      }
-    } else {
-      this.newRound(this.level);
-    }
-  }
-
-  //the first click starts the reaction.
-  //after that: level 1 clicks change the colours like before, level 2 clicks fire a neutron.
-  click() {
-    if (this.state === "waiting") {
-      this.state = "running";
-      userStartAudio(); //browsers block sound until a click, so the explosion can be heard later.
-      return;
-    }
-    if (this.state !== "running") {
-      return;
-    }
-
-    if (this.level === 1) {
-      for (let i = 0; i < this.balls.length; i++) {
-        this.balls[i].color = pickColor(i);
-      }
-    } else {
-      neutronGun.fire(this);
-    }
-  }
-
-  //everything you see, once every frame.
-  show() {
-    //exploded: a white screen and nothing else until space is pressed.
-    if (this.exploded) {
-      background(255);
-      if (this.level === 2) {
-        this.bigMessage("BOOM!", "you caused the explosion! press space to play again from level 1");
-      } else {
-        this.bigMessage("BOOM", "it melted down. press space to try level 1 again");
-      }
-      this.showCursor();
-      return;
-    }
-
-    //black at the start, getting redder as the reaction grows.
-    background(lerpColor(color(0), color(200, 20, 20), this.heat()));
-    this.showGrid();
-    reactor.show();
-
-    for (let ball of this.balls) {
-      ball.show();
-    }
-
-    //going backwards, so removing a finished flash doesn't skip the next one.
-    for (let i = this.flashes.length - 1; i >= 0; i--) {
-      this.flashes[i].show();
-      if (this.flashes[i].done()) {
-        this.flashes.splice(i, 1);
-      }
-    }
-
-    //the goal for this level, at the top above the reactor.
-    if (this.level === 1) {
-      this.smallText("LEVEL 1: use the water bucket to stop the reaction", 30);
-    } else {
-      this.smallText("LEVEL 2: click to fire neutrons and make it explode", 30);
-    }
-
-    //what's happening now, at the bottom above the speed bar.
-    if (this.state === "waiting") {
-      this.smallText("click to start the nuclear reaction", height - 42);
-    } else if (this.state === "running") {
-      this.smallText("atoms: " + this.balls.length, height - 42);
-    } else if (this.state === "won") {
-      this.smallText("you stopped the reaction! press space for level 2", height - 42);
-    } else {
-      this.smallText("the reaction died out. press space to try level 2 again", height - 42);
-    }
-
-    speedBar.show();
-    this.showCursor(); //drawn last, so it's on top of everything.
-  }
-
-  //level 1 shows the bucket, level 2 shows the neutron gun.
-  showCursor() {
-    if (this.level === 1) {
-      bucket.show(mouseX, mouseY);
-    } else {
-      neutronGun.show(mouseX, mouseY);
-    }
-  }
-
-  //light see-through lines every gridSize pixels, across the whole canvas.
-  showGrid() {
-    push();
-    stroke(255, 35);
-    strokeWeight(1);
-    for (let x = 0; x <= width; x += gridSize) {
-      line(x, 0, x, height); //up and down lines
-    }
-    for (let y = 0; y <= height; y += gridSize) {
-      line(0, y, width, y); //side to side lines
-    }
-    pop();
-  }
-
-  smallText(words, y) {
-    push();
-    noStroke();
-    fill(240); //light text, so it shows on the black background.
-    textAlign(CENTER, CENTER);
-    textSize(16);
-    text(words, width / 2, y);
-    pop();
-  }
-
-  bigMessage(title, words) {
-    push();
-    noStroke();
-    fill(0);
-    textAlign(CENTER, CENTER);
-    textSize(32);
-    text(title, width / 2, height / 2 - 30);
-    textSize(16);
-    text(words, width / 2, height / 2 + 20);
-    pop();
+//pause: everything freezes where it is. play: it carries on from there.
+function togglePause() {
+  paused = !paused;
+  if (paused) {
+    pauseButton.html("Play");
+  } else {
+    pauseButton.html("Pause");
   }
 }
 
-//the reactor: a smaller frame inside the canvas. the balls only move inside it.
-class Reactor {
-  constructor(margin) {
-    //margin = gap between the canvas edge and the reactor wall, on every side.
-    this.left = margin;
-    this.top = margin;
-    this.right = width - margin;
-    this.bottom = height - margin;
+//click a ball to turn it red. click it again to turn it back.
+function mousePressed(event) {
+  //clicks on the pause button come here too. this skips them, so the ball under the button doesn't turn red.
+  if (event && event.target === pauseButton.elt) {
+    return;
   }
 
-  //is this point inside the reactor walls?
-  contains(x, y) {
-    return x > this.left && x < this.right && y > this.top && y < this.bottom;
+  //forEach runs the code inside { } once for every ball in the array, calling it "ball" each time.
+  myBalls.forEach((ball) => {
+    if (ball.contains(mouseX, mouseY)) {
+      ball.clicked = !ball.clicked; //flips it: not clicked -> clicked, clicked -> not clicked.
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// *change* HAND GESTURE RECOGNITION (ASL fingerspelling practice)
+// how to use it:
+// 1. make a letter's hand shape, and HOLD that letter's key on the keyboard. it saves an example every frame.
+//    move your hand around a bit while you hold it, so it learns the shape from different angles.
+//    aim for about 50+ examples per letter, and at least 2 letters.
+// 2. press Enter to train. it practises on your examples (you'll see the rounds count up).
+// 3. make a hand shape: it shows which letter it thinks it is, and how sure it is.
+// press Backspace to forget everything and start again.
+// tip: use the same hand the whole time. a left hand and a right hand make mirror-image shapes.
+// ---------------------------------------------------------------------------
+
+//*change* ml5 calls this with the hands it found in each new camera frame.
+function gotHands(results) {
+  hands = results;
+}
+
+//*change* a fresh, empty sign model. ml5 works out the inputs and outputs from the examples you give it.
+function newSignModel() {
+  signModel = ml5.neuralNetwork({ task: "classification" });
+  sampleCounts = {};
+  modelState = "collecting";
+  prediction = null;
+}
+
+//*change* turns one hand into 42 numbers that describe its SHAPE, not where it is.
+//each of the 21 points is measured from the wrist, then divided by the hand's size
+//(wrist to middle knuckle), so moving your hand or holding it closer to the camera doesn't change the numbers.
+function handToNumbers(hand) {
+  let wrist = hand.keypoints[0];
+  let middleKnuckle = hand.keypoints[9];
+  let handSize = dist(wrist.x, wrist.y, middleKnuckle.x, middleKnuckle.y);
+  let numbers = [];
+  for (let point of hand.keypoints) {
+    numbers.push((point.x - wrist.x) / handSize);
+    numbers.push((point.y - wrist.y) / handSize);
+  }
+  return numbers;
+}
+
+//*change* while a letter key is held down and a hand is in view, save one example of that letter.
+function collectSample() {
+  if (modelState !== "collecting" || hands.length === 0 || !keyIsPressed) {
+    return;
+  }
+  //only single letters A to Z count. other keys (Enter, arrows, numbers) are ignored here.
+  if (key.length !== 1 || !/[a-z]/i.test(key)) {
+    return;
   }
 
-  show() {
-    push();
-    noFill();
-    stroke(240); //light wall, so it shows on the black background.
-    strokeWeight(3);
-    rect(this.left, this.top, this.right - this.left, this.bottom - this.top);
-    pop();
+  let letter = key.toUpperCase();
+  signModel.addData(handToNumbers(hands[0]), [letter]);
+  if (sampleCounts[letter] === undefined) {
+    sampleCounts[letter] = 0;
   }
+  sampleCounts[letter] += 1;
+}
+
+//*change* Enter: train on the examples. Backspace: start over.
+function keyPressed() {
+  if (key === "Enter") {
+    trainSigns();
+  }
+  if (key === "Backspace") {
+    newSignModel();
+  }
+}
+
+//*change* trains the sign model on everything you've saved.
+function trainSigns() {
+  if (modelState !== "collecting") {
+    return;
+  }
+  //it needs at least 2 different letters, or there's nothing to tell apart.
+  if (Object.keys(sampleCounts).length < 2) {
+    return;
+  }
+
+  modelState = "training";
+  trainingRound = 0;
+  signModel.normalizeData(); //puts all the numbers on the same scale, which helps it learn.
+  signModel.train(
+    { epochs: trainingRounds },
+    (round) => {
+      trainingRound = round + 1; //runs after every round, so the panel can count up.
+    },
+    () => {
+      modelState = "ready"; //runs once when training is finished.
+    },
+  );
+}
+
+//*change* once trained, keeps guessing which letter the hand is making.
+function guessSign() {
+  if (modelState !== "ready") {
+    return;
+  }
+  if (hands.length === 0) {
+    prediction = null; //no hand, no guess.
+    return;
+  }
+  if (classifying) {
+    return; //still busy with the last guess.
+  }
+
+  classifying = true;
+  signModel.classify(handToNumbers(hands[0]), (results) => {
+    classifying = false;
+    if (results) {
+      prediction = results[0]; //results are sorted, so [0] is its best guess.
+    }
+  });
+}
+
+//*change* draws the 21 hand points, lined up with the video using videoFit().
+function drawHand() {
+  if (hands.length === 0 || !video || video.width === 0) {
+    return;
+  }
+  let fit = videoFit();
+  push();
+  noStroke();
+  fill(0, 255, 140);
+  for (let point of hands[0].keypoints) {
+    circle(point.x * fit.scale + fit.offsetX, point.y * fit.scale + fit.offsetY, 10);
+  }
+  pop();
+}
+
+//*change* the box in the top-left corner (under the Pause button): instructions and example counts.
+//the guess is shown big in the top-right corner. both sit at the top so you can see them without scrolling.
+function drawSignPanel() {
+  let lines = [];
+  if (!handPose) {
+    lines.push("loading hand tracking...");
+  } else if (modelState === "collecting") {
+    lines.push("SIGN PRACTICE: make a letter's hand shape and HOLD that letter's key");
+    lines.push("to save examples (50+ each, 2+ letters). then press Enter to train.");
+    let counts = Object.entries(sampleCounts).map((entry) => entry[0] + ": " + entry[1]);
+    lines.push(counts.length > 0 ? counts.join("   ") : "no examples yet");
+    lines.push(hands.length > 0 ? "hand found" : "no hand found: hold your hand up to the camera");
+  } else if (modelState === "training") {
+    lines.push("training... round " + trainingRound + " of " + trainingRounds);
+  } else {
+    lines.push("ready! make a hand shape. (Backspace = start over)");
+  }
+
+  push();
+  let boxHeight = 20 + lines.length * 20;
+  noStroke();
+  fill(0, 180);
+  rect(16, 52, 560, boxHeight, 8);
+  fill(255);
+  textSize(14);
+  textAlign(LEFT, TOP);
+  for (let i = 0; i < lines.length; i++) {
+    text(lines[i], 28, 62 + i * 20);
+  }
+
+  //the guess, big in the top-right corner.
+  if (modelState === "ready" && prediction) {
+    textAlign(RIGHT, TOP);
+    textSize(96);
+    text(prediction.label, width - 24, 16);
+    textSize(18);
+    text(round(prediction.confidence * 100) + "% sure", width - 24, 122);
+  }
+  pop();
 }
 
 class Ball {
-  //upper case ball that is the template
-  constructor(x, y, c, r) {
+  constructor(x, y, r, c) {
+    this.homeX = x; //its spot on the grid. it never drifts more than wander pixels from here.
+    this.homeY = y;
     this.x = x;
     this.y = y;
-    this.color = c;
-    this.r = r;
-    this.dirX = random([-1, 1]);
-    this.dirY = random([-1, 1]);
-    this.rest = 0; //frames left before this ball can make another baby. 0 = ready.
-    this.bounces = 0; //how many times it has hit the reactor wall.
-    this.alpha = 255; //255 = solid, 0 = gone.
-    this.orbit = 50; //how far the two small circles sit from the centre of the ball.
-    this.angle = random(TWO_PI); //where the small circles are on their circle right now. random, so they don't all line up.
-    this.spin = random(0.02, 0.06) * random([-1, 1]); //how fast they go around. -1 = the other way round.
-    //how wide the small circles are, compared to r. half the balls get the normal size, half get smaller ones.
-    this.moonSize = random([0.5, 0.3]);
+    this.r = r; //its normal radius, before pulsing.
+    this.originalColor = c; //its own blue / purple. kept safe, so dehighlight() can put it back.
+    this.color = c; //the colour it's drawn with right now.
+    this.highlightColor = color("red"); //the colour it shows when clicked or on the person.
+    this.clicked = false; //mousePressed() flips this.
+    this.onBody = false; //true while the ball is over the person. draw() sets it every frame.
+
+    //the pulse: each ball gets its own speed and its own starting point, so they don't all pulse together.
+    this.pulseSpeed = random(0.03, 0.1);
+    this.pulseStart = random(TWO_PI);
   }
 
-  //how far the ball reaches from its centre, counting the two small circles.
-  //they go all the way around, so this is the furthest they can ever be in any direction.
-  //a small circle is r * moonSize wide, so its edge is half of that past its own middle.
-  //whichever sticks out more (the big ball or a small circle) is what touches the wall first.
-  reach() {
-    return max(this.r, this.orbit + (this.r * this.moonSize) / 2);
+  //the radius right now. sin() goes smoothly from -1 to 1 and back,
+  //so this goes from pulseAmount smaller to pulseAmount bigger and back.
+  size() {
+    return (
+      this.r + sin(pulseTime * this.pulseSpeed + this.pulseStart) * pulseAmount
+    );
   }
 
-  //true once it has bounced maxBounces times and started to decay.
-  fading() {
-    return this.bounces >= maxBounces;
-  }
-
-  show() {
-    //a copy of its colour with the see-through amount, so this.color itself stays the same.
-    let c = color(this.color);
-    c.setAlpha(this.alpha);
-    fill(c); // (120, 130, 140);
-    stroke(0, this.alpha); //the outline fades too, so no empty ring is left behind.
-    circle(this.x, this.y, this.r * 2);
-
-    //the small circles: the ball's colour mixed moonLighten% of the way to white, so a lighter, softer shade.
-    let moon = lerpColor(color(this.color), color(255), moonLighten / 100);
-    moon.setAlpha(this.alpha);
-    fill(moon);
-    //cos and sin turn the angle into a spot on a circle orbit pixels away from the ball.
-    //the second one uses minus, so the two are always on opposite sides.
-    let moonX = cos(this.angle) * this.orbit;
-    let moonY = sin(this.angle) * this.orbit;
-    circle(this.x + moonX, this.y + moonY, this.r * this.moonSize);
-    circle(this.x - moonX, this.y - moonY, this.r * this.moonSize);
-  }
-
+  //a tiny random step each frame, but never more than wander pixels from home.
   move() {
-    this.angle += this.spin; //turns the small circles a little every frame.
+    this.x = constrain(
+      this.x + random(-1, 1),
+      this.homeX - wander,
+      this.homeX + wander,
+    );
+    this.y = constrain(
+      this.y + random(-1, 1),
+      this.homeY - wander,
+      this.homeY + wander,
+    );
+  }
 
-    this.x += random(mouseX / 100, 5) * this.dirX;
-    this.y += random(mouseY / 100, 5) * this.dirY;
+  //is this ball sitting on the person? looks up the ball's spot in the segmentation mask.
+  isOnBody(mask, scale, offsetX, offsetY) {
+    //turn the canvas position into a position in the mask. the mask is the camera's size
+    //(like 640 x 480), and the video is scaled up and centred in draw(), so this undoes that.
+    let maskX = floor((this.x - offsetX) / scale);
+    let maskY = floor((this.y - offsetY) / scale);
 
-    //bounces off the reactor frame when the outside of the small circles touches it, not just the big ball.
-    let reach = this.reach();
-    if (this.x + reach >= reactor.right || this.x - reach <= reactor.left) {
-      this.dirX *= -1;
-      this.bounces += 1;
+    //outside the mask (can happen right at the edges): not on the body.
+    if (maskX < 0 || maskX >= mask.width || maskY < 0 || maskY >= mask.height) {
+      return false;
     }
-    if (this.y + reach >= reactor.bottom || this.y - reach <= reactor.top) {
-      this.dirY *= -1;
-      this.bounces += 1;
-    }
-    //keeps it all inside the frame. a baby born half in a wall would otherwise flip every frame and get stuck.
-    this.x = constrain(this.x, reactor.left + reach, reactor.right - reach);
-    this.y = constrain(this.y, reactor.top + reach, reactor.bottom - reach);
 
-    if (this.rest > 0) {
-      this.rest -= 1;
-    }
+    //each pixel takes 4 spots in mask.pixels: red, green, blue, alpha. so pixel number n starts at n * 4.
+    let index = (maskY * mask.width + maskX) * 4;
+    let alpha = mask.pixels[index + 3];
 
-    if (this.fading()) {
-      this.alpha -= fadeSpeed;
+    //with maskType "person", the person is see-through (alpha 0) and the room is solid (alpha 255),
+    //so a low alpha means the ball is on the body.
+    return alpha < 128;
+  }
+
+  //is this point (like the mouse) inside the ball right now?
+  contains(externalX, externalY) {
+    let distance = dist(this.x, this.y, externalX, externalY);
+    return distance <= this.size(); //closer than the radius = inside.
+  }
+
+  //runs every frame: red if it's been clicked OR the person is over it, its own colour if not.
+  update() {
+    if (this.clicked || this.onBody) {
+      this.highlight();
+    } else {
+      this.dehighlight();
     }
   }
 
-  //points this ball away from the other one, so two touching balls fly apart.
-  bounceAwayFrom(other) {
-    if (this.x < other.x) {
-      this.dirX = -1;
-    } else {
-      this.dirX = 1;
-    }
-    if (this.y < other.y) {
-      this.dirY = -1;
-    } else {
-      this.dirY = 1;
-    }
+  highlight() {
+    this.color = this.highlightColor;
   }
-}
 
-//a ring that grows and fades. orange where a fusion happened, blue where water put a ball out.
-class Flash {
-  constructor(x, y, c) {
-    this.x = x;
-    this.y = y;
-    this.c = c; //[r, g, b]
-    this.size = 0;
+  dehighlight() {
+    this.color = this.originalColor;
   }
 
   show() {
-    push();
-    noFill();
-    strokeWeight(3);
-    stroke(this.c[0], this.c[1], this.c[2], map(this.size, 0, 80, 255, 0));
-    circle(this.x, this.y, this.size);
-    pop();
-    this.size += 4;
-  }
-
-  //true once it has grown all the way and faded out.
-  done() {
-    return this.size > 80;
-  }
-}
-
-//LEVEL 1: the mouse is a bucket of water. any ball it touches gets put out.
-class Bucket {
-  constructor(size) {
-    this.size = size; //how far from the mouse the water reaches.
-  }
-
-  //any ball touching the bucket is put out (removed), with a blue splash.
-  pour(game) {
-    //going backwards, so removing a ball doesn't skip the next one.
-    for (let i = game.balls.length - 1; i >= 0; i--) {
-      let ball = game.balls[i];
-      if (dist(mouseX, mouseY, ball.x, ball.y) <= ball.r + this.size) {
-        game.flashes.push(new Flash(ball.x, ball.y, [80, 160, 255]));
-        game.balls.splice(i, 1);
-      }
-    }
-  }
-
-  //a little grey bucket with water on top.
-  show(x, y) {
-    push();
-    translate(x, y); //(0, 0) is now the mouse, so the shapes below are drawn around it.
-    stroke(200); //light outline, so the handle shows on the black background.
-    strokeWeight(2);
-    noFill();
-    arc(0, -15, 44, 36, PI, TWO_PI); //the handle
-    fill(150, 155, 165);
-    quad(-20, -15, 20, -15, 14, 20, -14, 20); //the bucket
-    fill(80, 160, 255);
-    ellipse(0, -15, 40, 8); //the water on top
-    pop();
-  }
-}
-
-//LEVEL 2: the mouse fires neutrons. each click inside the reactor adds a new atom, to feed the reaction.
-class NeutronGun {
-  fire(game) {
-    if (!reactor.contains(mouseX, mouseY) || game.balls.length >= maxBalls) {
-      return;
-    }
-    let ball = new Ball(mouseX, mouseY, color(random(255), random(255), random(255)), random(15, 30));
-    game.balls.push(ball);
-    game.flashes.push(new Flash(mouseX, mouseY, [255, 180, 60]));
-  }
-
-  //an orange dot with a ring around it, like a target.
-  show(x, y) {
-    push();
-    stroke(200, 90, 0);
-    strokeWeight(2);
-    noFill();
-    circle(x, y, 30);
-    line(x - 20, y, x - 10, y);
-    line(x + 10, y, x + 20, y);
-    line(x, y - 20, x, y - 10);
-    line(x, y + 10, x, y + 20);
+    fill(this.color);
     noStroke();
-    fill(255, 140, 0);
-    circle(x, y, 8);
-    pop();
-  }
-}
-
-//a bar along the bottom that fills up to the mouse: left = slow, right = fast.
-//it shows mouseX, the side-to-side speed in Ball's move(). (mouseY still sets the up-down speed.)
-class SpeedBar {
-  show() {
-    let barY = height - 20;
-    let barW = reactor.right - reactor.left; //same width as the reactor frame, so it lines up under it.
-    let filled = constrain(mouseX - reactor.left, 0, barW); //how much of the bar the mouse has reached.
-
-    push();
-    noStroke();
-    fill(255, 50);
-    rect(reactor.left, barY - 4, barW, 8, 4); //the empty bar
-    //colour goes from blue (slow) to orange (fast) as the mouse moves right.
-    fill(lerpColor(color(47, 79, 216), color(255, 180, 60), filled / barW));
-    rect(reactor.left, barY - 4, filled, 8, 4); //the filled part, up to the mouse
-    circle(reactor.left + filled, barY, 14); //a knob at the end of the fill
-
-    fill(240);
-    textSize(12);
-    textAlign(CENTER, CENTER);
-    text("slow", reactor.left / 2, barY);
-    text("fast", width - reactor.left / 2, barY);
-    pop();
+    circle(this.x, this.y, this.size() * 2);
   }
 }
