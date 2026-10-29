@@ -42,7 +42,8 @@ let handPose; //the hand tracking model. finds 21 points on your hand: wrist, kn
 let hands = []; //the hands it found in the latest camera frame.
 let signModel; //a small neural network that learns which hand shape is which letter.
 let sampleCounts = {}; //how many examples you've saved for each letter, like { A: 60, B: 55 }.
-let trainingRounds = 50; //how many times it practises on your examples. more = slower but often better.
+let trainingRounds = 100; //how many times it practises on your examples. more = slower but often better. //*fix* was 50, too few for a real (wobbly) hand
+let warning = ""; //*fix* a message for when something didn't work, like pressing Enter with only 1 sign saved.
 let trainingRound = 0; //which round it's on while training.
 let modelState = "collecting"; //"collecting" (saving examples), "training", or "ready" (recognising).
 let prediction = null; //its latest guess, like { label: "A", confidence: 0.93 }.
@@ -90,7 +91,7 @@ let compliments = [
     sentence: "You bring such good energy!",
   },
 ];
-let complimentConfidence = 0.8; //how sure it has to be (0 to 1) before it shows a compliment.
+let complimentConfidence = 0.6; //how sure it has to be (0 to 1) before it shows a compliment. //*fix* was 0.8, which a real hand often never reached
 
 function setup() {
   const canvas = createCanvas(sketch_holder_width(), windowHeight); //full width of the page, full height of the window.
@@ -282,6 +283,7 @@ function newSignModel() {
   prediction = null;
   recentGuesses = []; //*change*
   shownGuess = null; //*change*
+  warning = ""; //*fix*
 }
 
 //*change* turns one hand into 42 numbers that describe its SHAPE, not where it is.
@@ -351,10 +353,13 @@ function trainSigns() {
     return;
   }
   //it needs at least 2 different letters, or there's nothing to tell apart.
+  //*fix* this used to fail silently, so it looked like Enter did nothing. now it says why.
   if (Object.keys(sampleCounts).length < 2) {
+    warning = "can't train yet: teach at least 2 different signs first (e.g. hold 1, then hold 2)";
     return;
   }
 
+  warning = ""; //*fix*
   modelState = "training";
   trainingRound = 0;
   signModel.normalizeData(); //puts all the numbers on the same scale, which helps it learn.
@@ -385,8 +390,12 @@ function guessSign() {
   }
 
   classifying = true;
-  signModel.classify(handToNumbers(smoothHand), (results) => {
+  //*fix* ml5 calls back with (results, error). on an error results is empty; classifying still resets so guessing never gets stuck.
+  signModel.classify(handToNumbers(smoothHand), (results, error) => {
     classifying = false;
+    if (error) {
+      console.log("classify error:", error);
+    }
     if (results) {
       prediction = results[0]; //results are sorted, so [0] is its best guess.
       steadyGuess(prediction); //*change*
@@ -466,6 +475,18 @@ function drawSignPanel() {
     lines.push("training... round " + trainingRound + " of " + trainingRounds);
   } else {
     lines.push("ready! make a hand shape. (Backspace = start over)");
+    //*fix* always show what it's seeing right now, even when it's not sure enough to show a compliment,
+    //so you can tell whether it's working but unsure, or not seeing your hand at all.
+    if (!smoothHand) {
+      lines.push("no hand found: hold your hand up to the camera");
+    } else if (prediction) {
+      let compliment = findCompliment(prediction.label);
+      let name = compliment ? compliment.emoji + " " + compliment.name : prediction.label;
+      lines.push("seeing: " + name + "  (" + round(prediction.confidence * 100) + "% sure)");
+    }
+  }
+  if (warning) {
+    lines.push(warning); //*fix*
   }
 
   let boxHeight = 20 + lines.length * 20; //*change* worked out first, so the compliment guide can go right under it.
