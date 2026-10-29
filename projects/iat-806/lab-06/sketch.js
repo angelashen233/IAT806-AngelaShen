@@ -3,6 +3,9 @@
 // - the webcam finds your body, and the balls on top of you turn red. click a ball to turn it red too.
 // - *change* hand gesture recognition: teach it letters from the ASL alphabet (fingerspelling),
 //   then it shows which letter your hand is making.
+// - *change* compliments: an on-screen guide shows 4 hand gestures. teach them with the number keys 1 to 4,
+//   and when it sees one, it shows that gesture's compliment sentence.
+// - *change* smaller balls, and steadier tracking (smoothed hand points, a steadier guess, a smoother body outline).
 //
 // REFERENCES
 // body segmentation: ml5.js example "bodySegmentation-mask-person", https://editor.p5js.org/ml5/sketches/h6TN8umP5
@@ -10,9 +13,12 @@
 // ml5.js license and Code of Conduct: https://github.com/ml5js/ml5-next-gen/blob/main/LICENSE.md
 
 //settings: change these to see what happens.
-let spacing = 20; //how many pixels apart the balls' spots are. smaller = more balls.
-let pulseAmount = 5; //how many pixels bigger and smaller each ball gets as it pulses.
-let wander = 4; //how many pixels a ball can drift away from its spot.
+let spacing = 20; //how many pixels apart the balls' spots are. smaller = more balls (but slower: 16 dropped to ~10 fps).
+//*change* smaller balls: pulse and wander were 5 and 4, with a radius of 8 to 14 (see makeBalls()).
+let pulseAmount = 2; //how many pixels bigger and smaller each ball gets as it pulses.
+let wander = 2; //how many pixels a ball can drift away from its spot.
+let minRadius = 3; //*change* the smallest and biggest a ball can be (its radius, before pulsing).
+let maxRadius = 6;
 
 let myBalls = [];
 
@@ -41,6 +47,50 @@ let trainingRound = 0; //which round it's on while training.
 let modelState = "collecting"; //"collecting" (saving examples), "training", or "ready" (recognising).
 let prediction = null; //its latest guess, like { label: "A", confidence: 0.93 }.
 let classifying = false; //true while it's busy guessing, so it doesn't start a second guess on top.
+
+//*change* steadier tracking
+let smoothHand = null; //the hand's 21 points, averaged over the last few frames so they don't jitter.
+let handSmoothing = 0.5; //0 to 1: how much each new frame moves the points. lower = steadier but slower to follow.
+let minHandConfidence = 0.6; //ignore a hand the tracker is less sure about than this (0 to 1).
+let recentGuesses = []; //the last few guesses, so one odd frame can't change what's shown.
+let guessesToKeep = 8; //how many recent guesses it looks at.
+let shownGuess = null; //the guess on screen: only changes when most of the recent guesses agree.
+
+//*change* compliments: each gesture has a number key (to teach it), what it looks like, and the sentence it makes.
+//they use number keys, so the letters A to Z stay free for fingerspelling.
+//the "I love you" hand is an ASL sign; the others are everyday gestures, not ASL signs.
+//gestures mean different things in different places, so the guide says what each one means here.
+let compliments = [
+  {
+    key: "1",
+    emoji: "\u{1F91F}",
+    name: '"I love you" hand (ASL)',
+    how: "thumb, index finger and pinky up; middle and ring fingers folded down",
+    sentence: "I love you, you mean so much to me!",
+  },
+  {
+    key: "2",
+    emoji: "\u{1F44D}",
+    name: "thumbs up",
+    how: "make a fist with your thumb pointing up",
+    sentence: "Great job, you did amazing!",
+  },
+  {
+    key: "3",
+    emoji: "\u{270B}",
+    name: "open hand (high five)",
+    how: "all five fingers spread, palm facing the camera",
+    sentence: "High five, you're awesome!",
+  },
+  {
+    key: "4",
+    emoji: "\u{270C}\u{FE0F}",
+    name: "peace sign",
+    how: "index and middle fingers up in a V, the others folded down",
+    sentence: "You bring such good energy!",
+  },
+];
+let complimentConfidence = 0.8; //how sure it has to be (0 to 1) before it shows a compliment.
 
 function setup() {
   const canvas = createCanvas(sketch_holder_width(), windowHeight); //full width of the page, full height of the window.
@@ -100,7 +150,7 @@ function makeBalls() {
   myBalls = [];
   for (let x = spacing / 2; x < width; x += spacing) {
     for (let y = spacing / 2; y < height; y += spacing) {
-      myBalls.push(new Ball(x, y, random(8, 14), bluePurple())); //put smth inside of the array
+      myBalls.push(new Ball(x, y, random(minRadius, maxRadius), bluePurple())); //put smth inside of the array
     }
   }
 }
@@ -128,12 +178,23 @@ function draw() {
     fit = videoFit();
     segmentation.mask.loadPixels(); //once per frame, so every ball can read the mask quickly.
     video.mask(segmentation.mask);
-    image(video, fit.offsetX, fit.offsetY, video.width * fit.scale, video.height * fit.scale);
+    image(
+      video,
+      fit.offsetX,
+      fit.offsetY,
+      video.width * fit.scale,
+      video.height * fit.scale,
+    );
   }
 
   for (let ball of myBalls) {
     if (segmentation) {
-      ball.onBody = ball.isOnBody(segmentation.mask, fit.scale, fit.offsetX, fit.offsetY);
+      ball.onBody = ball.isOnBody(
+        segmentation.mask,
+        fit.scale,
+        fit.offsetX,
+        fit.offsetY,
+      );
     }
     if (!paused) {
       ball.move();
@@ -192,8 +253,25 @@ function mousePressed(event) {
 // ---------------------------------------------------------------------------
 
 //*change* ml5 calls this with the hands it found in each new camera frame.
+//*change* steadier tracking: skips hands it's unsure about, and averages the points over a few frames.
 function gotHands(results) {
-  hands = results;
+  hands = results.filter((hand) => hand.confidence === undefined || hand.confidence >= minHandConfidence);
+
+  if (hands.length === 0) {
+    smoothHand = null;
+    return;
+  }
+
+  let newPoints = hands[0].keypoints;
+  if (smoothHand === null) {
+    smoothHand = { keypoints: newPoints.map((point) => ({ x: point.x, y: point.y })) };
+    return;
+  }
+  //lerp moves each smoothed point part of the way (handSmoothing) towards where the hand is now.
+  for (let i = 0; i < newPoints.length; i++) {
+    smoothHand.keypoints[i].x = lerp(smoothHand.keypoints[i].x, newPoints[i].x, handSmoothing);
+    smoothHand.keypoints[i].y = lerp(smoothHand.keypoints[i].y, newPoints[i].y, handSmoothing);
+  }
 }
 
 //*change* a fresh, empty sign model. ml5 works out the inputs and outputs from the examples you give it.
@@ -202,6 +280,8 @@ function newSignModel() {
   sampleCounts = {};
   modelState = "collecting";
   prediction = null;
+  recentGuesses = []; //*change*
+  shownGuess = null; //*change*
 }
 
 //*change* turns one hand into 42 numbers that describe its SHAPE, not where it is.
@@ -219,22 +299,40 @@ function handToNumbers(hand) {
   return numbers;
 }
 
-//*change* while a letter key is held down and a hand is in view, save one example of that letter.
+//*change* while a letter key (or a compliment's number key 1 to 4) is held down and a hand is in view,
+//save one example of it. uses the smoothed hand, so the examples are steadier.
 function collectSample() {
-  if (modelState !== "collecting" || hands.length === 0 || !keyIsPressed) {
-    return;
-  }
-  //only single letters A to Z count. other keys (Enter, arrows, numbers) are ignored here.
-  if (key.length !== 1 || !/[a-z]/i.test(key)) {
+  if (modelState !== "collecting" || !smoothHand || !keyIsPressed) {
     return;
   }
 
-  let letter = key.toUpperCase();
-  signModel.addData(handToNumbers(hands[0]), [letter]);
-  if (sampleCounts[letter] === undefined) {
-    sampleCounts[letter] = 0;
+  let label;
+  if (key.length === 1 && /[a-z]/i.test(key)) {
+    label = key.toUpperCase(); //a letter, for fingerspelling.
+  } else if (findCompliment(key)) {
+    label = key; //*change* a number key 1 to 4, for a compliment gesture.
+  } else {
+    return; //any other key (Enter, arrows, 5 to 9...) is ignored here.
   }
-  sampleCounts[letter] += 1;
+
+  signModel.addData(handToNumbers(smoothHand), [label]);
+  if (sampleCounts[label] === undefined) {
+    sampleCounts[label] = 0;
+  }
+  sampleCounts[label] += 1;
+}
+
+//*change* the compliment that goes with this label ("1" to "4"), or undefined if it's a letter.
+function findCompliment(label) {
+  return compliments.find((compliment) => compliment.key === label);
+}
+
+//*change* the compliment it's showing right now, but only if it's sure enough. otherwise undefined.
+function currentCompliment() {
+  if (modelState !== "ready" || !shownGuess || shownGuess.confidence < complimentConfidence) {
+    return undefined;
+  }
+  return findCompliment(shownGuess.label);
 }
 
 //*change* Enter: train on the examples. Backspace: start over.
@@ -276,8 +374,10 @@ function guessSign() {
   if (modelState !== "ready") {
     return;
   }
-  if (hands.length === 0) {
+  if (!smoothHand) {
     prediction = null; //no hand, no guess.
+    recentGuesses = []; //*change*
+    shownGuess = null; //*change*
     return;
   }
   if (classifying) {
@@ -285,25 +385,54 @@ function guessSign() {
   }
 
   classifying = true;
-  signModel.classify(handToNumbers(hands[0]), (results) => {
+  signModel.classify(handToNumbers(smoothHand), (results) => {
     classifying = false;
     if (results) {
       prediction = results[0]; //results are sorted, so [0] is its best guess.
+      steadyGuess(prediction); //*change*
     }
   });
 }
 
+//*change* steadier guess: remembers the last few guesses, and only changes what's on screen
+//when more than half of them agree. one odd frame can't make the letter flicker.
+function steadyGuess(guess) {
+  recentGuesses.push(guess);
+  if (recentGuesses.length > guessesToKeep) {
+    recentGuesses.shift(); //forget the oldest one.
+  }
+
+  //count how many times each label shows up in the recent guesses.
+  let counts = {};
+  for (let g of recentGuesses) {
+    counts[g.label] = (counts[g.label] || 0) + 1;
+  }
+  let best = Object.keys(counts).reduce((a, b) => (counts[a] >= counts[b] ? a : b));
+
+  if (counts[best] > guessesToKeep / 2) {
+    //how sure it is = the average confidence of the guesses that agree.
+    let agreeing = recentGuesses.filter((g) => g.label === best);
+    let confidence = agreeing.reduce((total, g) => total + g.confidence, 0) / agreeing.length;
+    shownGuess = { label: best, confidence: confidence };
+  }
+}
+
 //*change* draws the 21 hand points, lined up with the video using videoFit().
+//*change* draws the smoothed points, so the dots don't jitter.
 function drawHand() {
-  if (hands.length === 0 || !video || video.width === 0) {
+  if (!smoothHand || !video || video.width === 0) {
     return;
   }
   let fit = videoFit();
   push();
   noStroke();
   fill(0, 255, 140);
-  for (let point of hands[0].keypoints) {
-    circle(point.x * fit.scale + fit.offsetX, point.y * fit.scale + fit.offsetY, 10);
+  for (let point of smoothHand.keypoints) {
+    circle(
+      point.x * fit.scale + fit.offsetX,
+      point.y * fit.scale + fit.offsetY,
+      10,
+    );
   }
   pop();
 }
@@ -315,22 +444,35 @@ function drawSignPanel() {
   if (!handPose) {
     lines.push("loading hand tracking...");
   } else if (modelState === "collecting") {
-    lines.push("SIGN PRACTICE: make a letter's hand shape and HOLD that letter's key");
-    lines.push("to save examples (50+ each, 2+ letters). then press Enter to train.");
-    let counts = Object.entries(sampleCounts).map((entry) => entry[0] + ": " + entry[1]);
+    lines.push(
+      "SIGN PRACTICE: make a hand shape and HOLD its key (a letter, or 1-4 below)",
+    );
+    lines.push(
+      "to save examples (50+ each, 2+ signs). then press Enter to train.",
+    );
+    //*change* compliments show their emoji instead of their number.
+    let counts = Object.entries(sampleCounts).map((entry) => {
+      let compliment = findCompliment(entry[0]);
+      let name = compliment ? compliment.emoji : entry[0];
+      return name + ": " + entry[1];
+    });
     lines.push(counts.length > 0 ? counts.join("   ") : "no examples yet");
-    lines.push(hands.length > 0 ? "hand found" : "no hand found: hold your hand up to the camera");
+    lines.push(
+      smoothHand
+        ? "hand found"
+        : "no hand found: hold your hand up to the camera",
+    );
   } else if (modelState === "training") {
     lines.push("training... round " + trainingRound + " of " + trainingRounds);
   } else {
     lines.push("ready! make a hand shape. (Backspace = start over)");
   }
 
+  let boxHeight = 20 + lines.length * 20; //*change* worked out first, so the compliment guide can go right under it.
   push();
-  let boxHeight = 20 + lines.length * 20;
   noStroke();
   fill(0, 180);
-  rect(16, 52, 560, boxHeight, 8);
+  rect(16, 52, 660, boxHeight, 8); //*change* was 560 wide, now fits the guide's longest line
   fill(255);
   textSize(14);
   textAlign(LEFT, TOP);
@@ -339,12 +481,76 @@ function drawSignPanel() {
   }
 
   //the guess, big in the top-right corner.
-  if (modelState === "ready" && prediction) {
+  //*change* uses the steadier guess. a compliment shows its emoji and full sentence; a letter shows the letter.
+  let compliment = currentCompliment();
+  //*change* a solid box behind the guess, so a new guess is never drawn on top of an old one
+  //(with background(0) turned off, nothing else clears this corner between frames).
+  if (compliment || (modelState === "ready" && shownGuess)) {
+    let boxWidth = compliment ? 40 + max(80, compliment.sentence.length * 16) : 140;
+    fill(0);
+    rect(width - boxWidth - 8, 8, boxWidth, 168, 8);
+    fill(255);
+  }
+  if (compliment) {
+    textAlign(RIGHT, TOP);
+    textSize(72);
+    text(compliment.emoji, width - 24, 16);
+    textSize(30);
+    textStyle(BOLD);
+    text(compliment.sentence, width - 24, 104);
+    textStyle(NORMAL);
+    textSize(16);
+    text(round(shownGuess.confidence * 100) + "% sure", width - 24, 146);
+  } else if (modelState === "ready" && shownGuess && !findCompliment(shownGuess.label)) {
     textAlign(RIGHT, TOP);
     textSize(96);
-    text(prediction.label, width - 24, 16);
+    text(shownGuess.label, width - 24, 16);
     textSize(18);
-    text(round(prediction.confidence * 100) + "% sure", width - 24, 122);
+    text(round(shownGuess.confidence * 100) + "% sure", width - 24, 122);
+  }
+  pop();
+
+  drawComplimentGuide(52 + boxHeight + 12); //*change*
+}
+
+//*change* the compliment guide: one row per gesture, with its emoji, key, how to make it, and its sentence.
+//it sits under the instructions box. the row it's seeing right now lights up pink.
+function drawComplimentGuide(top) {
+  let rowHeight = 48;
+  let boxWidth = 660;
+  let boxHeight = 36 + compliments.length * rowHeight;
+  let showing = currentCompliment();
+
+  push();
+  noStroke();
+  fill(0, 180);
+  rect(16, top, boxWidth, boxHeight, 8);
+
+  fill(255);
+  textAlign(LEFT, TOP);
+  textSize(14);
+  textStyle(BOLD);
+  text("COMPLIMENTS: make the gesture and hold its number key to teach it", 28, top + 10);
+  textStyle(NORMAL);
+
+  for (let i = 0; i < compliments.length; i++) {
+    let compliment = compliments[i];
+    let rowTop = top + 32 + i * rowHeight;
+
+    if (showing === compliment) {
+      fill(255, 120, 180, 120);
+      rect(22, rowTop - 2, boxWidth - 12, rowHeight - 4, 6);
+    }
+
+    fill(255);
+    textSize(28);
+    text(compliment.emoji, 30, rowTop + 4);
+    textSize(13);
+    text("[" + compliment.key + "]  " + compliment.name + ": " + compliment.how, 74, rowTop + 2);
+    textSize(14);
+    textStyle(BOLD);
+    text('"' + compliment.sentence + '"', 74, rowTop + 22);
+    textStyle(NORMAL);
   }
   pop();
 }
@@ -361,6 +567,9 @@ class Ball {
     this.highlightColor = color("red"); //the colour it shows when clicked or on the person.
     this.clicked = false; //mousePressed() flips this.
     this.onBody = false; //true while the ball is over the person. draw() sets it every frame.
+    //*change* smoother body outline: goes up towards 1 while the ball is on the person, down towards 0 when not.
+    //the ball only turns red once it's past halfway, so balls on the edge of your outline don't flicker.
+    this.bodyAmount = 0;
 
     //the pulse: each ball gets its own speed and its own starting point, so they don't all pulse together.
     this.pulseSpeed = random(0.03, 0.1);
@@ -418,7 +627,8 @@ class Ball {
 
   //runs every frame: red if it's been clicked OR the person is over it, its own colour if not.
   update() {
-    if (this.clicked || this.onBody) {
+    this.bodyAmount = lerp(this.bodyAmount, this.onBody ? 1 : 0, 0.3); //*change*
+    if (this.clicked || this.bodyAmount > 0.5) {
       this.highlight();
     } else {
       this.dehighlight();
