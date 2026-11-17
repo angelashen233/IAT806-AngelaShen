@@ -6,19 +6,27 @@
 // - *change* compliments: an on-screen guide shows 4 hand gestures. teach them with the number keys 1 to 4,
 //   and when it sees one, it shows that gesture's compliment sentence.
 // - *change* smaller balls, and steadier tracking (smoothed hand points, a steadier guess, a smoother body outline).
+// - *game* game mode: press the "Game mode" button to practise basic sentences (Hi, How are you?, ...)
+//   against a timer. finishing a sentence in time gives points, plus bonus points for the seconds left.
+// - *game* even smaller balls, in pastel light blue and light purple.
+// - *levels* the game has 3 levels: 1 single signs, 2 short sentences, 3 longer sentences from memory.
+// - *api* in levels 1 and 2, a box shows the real ASL sign as a moving stick figure. it comes from sign.mt's free API.
 //
 // REFERENCES
 // body segmentation: ml5.js example "bodySegmentation-mask-person", https://editor.p5js.org/ml5/sketches/h6TN8umP5
 // *change* hand tracking and the sign classifier: ml5.js handPose and neuralNetwork, https://ml5js.org/
 // ml5.js license and Code of Conduct: https://github.com/ml5js/ml5-next-gen/blob/main/LICENSE.md
+// *api* the real-sign animations: sign.mt, an open-source sign language translator, https://sign.mt/
+// and its pose-viewer component (loaded in index.html), https://www.npmjs.com/package/pose-viewer
 
 //settings: change these to see what happens.
 let spacing = 20; //how many pixels apart the balls' spots are. smaller = more balls (but slower: 16 dropped to ~10 fps).
 //*change* smaller balls: pulse and wander were 5 and 4, with a radius of 8 to 14 (see makeBalls()).
-let pulseAmount = 2; //how many pixels bigger and smaller each ball gets as it pulses.
-let wander = 2; //how many pixels a ball can drift away from its spot.
-let minRadius = 3; //*change* the smallest and biggest a ball can be (its radius, before pulsing).
-let maxRadius = 6;
+//*game* smaller again: pulse and wander were 2 and 2, with a radius of 3 to 6.
+let pulseAmount = 1; //how many pixels bigger and smaller each ball gets as it pulses.
+let wander = 1.5; //how many pixels a ball can drift away from its spot.
+let minRadius = 1.5; //*change* the smallest and biggest a ball can be (its radius, before pulsing).
+let maxRadius = 3.5;
 
 let myBalls = [];
 
@@ -93,6 +101,112 @@ let compliments = [
 ];
 let complimentConfidence = 0.6; //how sure it has to be (0 to 1) before it shows a compliment. //*fix* was 0.8, which a real hand often never reached
 
+// ---------------------------------------------------------------------------
+// *game* GAME MODE settings and sentences
+// ---------------------------------------------------------------------------
+let gameOn = false; //the "Game mode" button flips this.
+let gameButton;
+let bonusPerSecond = 10; //bonus points for every second still left on the timer.
+let holdSeconds = 0.8; //how long you have to hold a hand shape before it counts.
+let readySeconds = 3; //time to read the sentence before the timer starts.
+let messageSeconds = 2.5; //how long the "yes!" or "time's up" message stays before the next sentence.
+
+//the hand shapes the game can check. each one says which fingers should be up, in the order
+//thumb, index, middle, ring, pinky. true = up, false = folded, null = doesn't matter.
+let handShapes = {
+  flat: [null, true, true, true, true],
+  point: [null, true, false, false, false],
+  thumbUp: [true, false, false, false, false],
+  fist: [false, false, false, false, false],
+  loveYou: [true, true, false, false, true],
+};
+
+//*levels* the signs, written once, so the levels can reuse them.
+//these are SIMPLIFIED for one hand and a webcam: the game only checks the hand shape.
+//real ASL signs also use movement, where the hand is, both hands, and your face
+//(the "how" text says what the real sign does, and the demo box shows it).
+let signs = {
+  hello: { sign: "HELLO", shape: "flat", emoji: "\u{270B}", how: "flat hand, fingers up, by your forehead (it moves out like a salute)" },
+  thankYou: { sign: "THANK YOU", shape: "flat", emoji: "\u{270B}", how: "flat hand, fingertips at your chin (it moves forward, away from you)" },
+  you: { sign: "YOU", shape: "point", emoji: "\u{261D}\u{FE0F}", how: "point your index finger (at the person you're talking to)" },
+  there: { sign: "THERE", shape: "point", emoji: "\u{261D}\u{FE0F}", how: "point your index finger (towards where it is)" },
+  how: { sign: "HOW", shape: "thumbUp", emoji: "\u{1F44D}", how: "curled fingers with your thumb up (two hands roll forward, knuckles together)" },
+  help: { sign: "HELP", shape: "thumbUp", emoji: "\u{1F44D}", how: "fist with your thumb up (it sits on your other palm and lifts up)" },
+  washroom: { sign: "WASHROOM", shape: "fist", emoji: "\u{270A}", how: "fist with your thumb tucked under your index finger, the letter T (it shakes)" },
+  yes: { sign: "YES", shape: "fist", emoji: "\u{270A}", how: "a fist (it nods up and down, like a head nodding)" },
+  loveYou: { sign: "I LOVE YOU", shape: "loveYou", emoji: "\u{1F91F}", how: "thumb, index finger and pinky up; middle and ring fingers folded" },
+};
+
+//*levels* the 3 levels. each level has its own time limit and points, and gets harder:
+//level 1 is one sign at a time, level 2 is two signs, level 3 is three signs with the hints hidden.
+//"demo" is the text sent to the sign API when it's different from the sentence
+//(the API knows the American word "bathroom" better than "washroom").
+let levels = [
+  {
+    name: "Single signs",
+    seconds: 20, //the time limit for each sentence.
+    points: 100, //points for finishing a sentence in time.
+    showHow: true, //show how to make each sign?
+    showDemo: true, //show the real sign in the demo box?
+    sentences: [
+      { sentence: "Hi!", demo: "hello", steps: [signs.hello] },
+      { sentence: "You", steps: [signs.you] },
+      { sentence: "Help", steps: [signs.help] },
+      { sentence: "Washroom", demo: "bathroom", steps: [signs.washroom] },
+      { sentence: "Thank you.", steps: [signs.thankYou] },
+      { sentence: "I love you.", steps: [signs.loveYou] },
+    ],
+  },
+  {
+    name: "Short sentences",
+    seconds: 20,
+    points: 150,
+    showHow: true,
+    showDemo: true,
+    sentences: [
+      { sentence: "How are you?", steps: [signs.how, signs.you] },
+      { sentence: "Do you need help?", steps: [signs.you, signs.help] },
+      { sentence: "The washroom is there.", demo: "the bathroom is there", steps: [signs.washroom, signs.there] },
+      { sentence: "Yes, thank you.", steps: [signs.yes, signs.thankYou] },
+    ],
+  },
+  {
+    name: "Longer sentences, from memory",
+    seconds: 15,
+    points: 200,
+    showHow: false, //no hints: you have to remember the shapes. (they come back if you run out of time.)
+    showDemo: false,
+    sentences: [
+      { sentence: "Hi, how are you?", steps: [signs.hello, signs.how, signs.you] },
+      { sentence: "Hi, do you need help?", steps: [signs.hello, signs.you, signs.help] },
+      { sentence: "The washroom is there, thank you.", steps: [signs.washroom, signs.there, signs.thankYou] },
+      { sentence: "Thank you, I love you.", steps: [signs.thankYou, signs.loveYou] },
+    ],
+  },
+];
+
+//where the game is right now.
+let gameState = "ready"; //"ready" (reading time), "playing", "success", "timeup", or "levelDone".
+let levelIndex = 0; //*levels* which level you're on.
+let sentenceIndex = 0; //which sentence of that level you're on.
+let stepIndex = 0; //which sign of that sentence you're on.
+let timeLeft = 0; //seconds left on the timer.
+let holdTime = 0; //how long you've held the right shape so far.
+let waitLeft = 0; //seconds left of reading time, or of the message between sentences.
+let score = 0;
+let levelScore = 0; //*levels* the points from this level only, so trying a level again can take them back off.
+let lastBonus = 0; //the time bonus from the sentence you just finished.
+let sentenceResults = []; //true or false for each sentence played in this level: did you finish it in time?
+
+//*api* the real-sign demo box. it asks sign.mt's free API (no key or account needed) to translate
+//the sentence into ASL, and plays the answer as a moving stick figure.
+//only the sentence text is sent. it's a machine translation, so treat it as a guide, not a teacher.
+let signApi = "https://us-central1-sign-mt.cloudfunctions.net/spoken_text_to_signed_pose";
+let demoBox; //the box on the page that holds the stick figure and its caption.
+let demoViewer; //the <pose-viewer> element that plays the animation.
+let demoCaption;
+let demoFiles = {}; //the API addresses that have already worked, so each sentence is only checked once.
+
 function setup() {
   const canvas = createCanvas(sketch_holder_width(), windowHeight); //full width of the page, full height of the window.
 
@@ -106,6 +220,13 @@ function setup() {
   pauseButton.parent("sketch-holder");
   pauseButton.position(16, 16);
   pauseButton.mousePressed(togglePause);
+
+  //*game* the game mode button, next to the pause button.
+  gameButton = createButton("Game mode: off");
+  gameButton.parent("sketch-holder");
+  gameButton.position(100, 16);
+  gameButton.mousePressed(toggleGame);
+  makeDemoBox(); //*api*
 
   makeBalls();
   newSignModel(); //*change*
@@ -137,12 +258,14 @@ function sketch_holder_width() {
 function windowResized() {
   resizeCanvas(sketch_holder_width(), windowHeight);
   makeBalls();
+  placeDemoBox(); //*api*
 }
 
-//a random colour somewhere between blue and purple.
+//a random colour somewhere between pastel light blue and pastel light purple.
+//*game* was a strong blue (40, 90, 230) and a strong purple (150, 60, 220).
 function bluePurple() {
-  let blue = color(40, 90, 230);
-  let purple = color(150, 60, 220);
+  let blue = color(170, 215, 255);
+  let purple = color(210, 185, 255);
   return lerpColor(blue, purple, random(1)); //random(1) = how far along from blue to purple, 0 to 1.
 }
 
@@ -204,6 +327,14 @@ function draw() {
     ball.show();
   }
 
+  //*game* game mode swaps the practice panels for the game. the teaching keys are off while it's on.
+  if (gameOn) {
+    updateGame();
+    drawHand();
+    drawGamePanel();
+    return;
+  }
+
   //*change* hand gesture recognition
   collectSample();
   guessSign();
@@ -229,7 +360,7 @@ function togglePause() {
 //click a ball to turn it red. click it again to turn it back.
 function mousePressed(event) {
   //clicks on the pause button come here too. this skips them, so the ball under the button doesn't turn red.
-  if (event && event.target === pauseButton.elt) {
+  if (event && (event.target === pauseButton.elt || event.target === gameButton.elt)) {
     return;
   }
 
@@ -339,6 +470,18 @@ function currentCompliment() {
 
 //*change* Enter: train on the examples. Backspace: start over.
 function keyPressed() {
+  //*game* in game mode the teaching keys do nothing.
+  //*levels* Enter moves on when a level is done, and 1, 2, 3 jump straight to a level.
+  if (gameOn) {
+    if (key === "Enter" && gameState === "levelDone") {
+      nextLevel();
+    }
+    if (key >= "1" && key <= String(levels.length)) {
+      score = 0;
+      startLevel(Number(key) - 1);
+    }
+    return;
+  }
   if (key === "Enter") {
     trainSigns();
   }
@@ -576,6 +719,428 @@ function drawComplimentGuide(top) {
   pop();
 }
 
+// ---------------------------------------------------------------------------
+// *game* GAME MODE
+// how to play:
+// 1. press the "Game mode" button. a sentence appears, with the sign(s) that make it.
+// 2. after a short "get ready", the timer starts. make each hand shape and hold it until its bar fills.
+// 3. finish the sentence before the timer runs out: points, plus 10 bonus points for every second left.
+// 4. *levels* sign at least half of a level's sentences in time to move up to the next level.
+//    Enter moves on when a level is done. the keys 1, 2 and 3 jump straight to a level.
+// no teaching needed: the game checks which fingers are up, straight from the hand points.
+// ---------------------------------------------------------------------------
+
+//turns game mode on and off. turning it on always starts a new game.
+function toggleGame() {
+  gameOn = !gameOn;
+  gameButton.html(gameOn ? "Game mode: on" : "Game mode: off");
+  clear(); //wipes the old panels off the canvas, since nothing else clears it.
+  if (gameOn) {
+    startGame();
+  } else {
+    demoBox.hide(); //*api*
+  }
+}
+
+function startGame() {
+  score = 0;
+  startLevel(0);
+}
+
+//*levels* starts a level from its first sentence.
+function startLevel(index) {
+  levelIndex = index;
+  levelScore = 0;
+  sentenceResults = [];
+  startSentence(0);
+}
+
+function startSentence(index) {
+  sentenceIndex = index;
+  stepIndex = 0;
+  timeLeft = levels[levelIndex].seconds;
+  holdTime = 0;
+  waitLeft = readySeconds;
+  gameState = "ready";
+  loadDemo(); //*api*
+}
+
+//*levels* did you sign at least half of this level's sentences in time?
+function levelPassed() {
+  let learned = sentenceResults.filter((result) => result).length;
+  return learned * 2 >= levels[levelIndex].sentences.length;
+}
+
+//*levels* Enter on the "level done" screen: up a level if you passed, the same level again if not.
+//after the last level, it starts again from level 1.
+function nextLevel() {
+  if (!levelPassed()) {
+    score -= levelScore; //trying again, so this level's points come back off.
+    startLevel(levelIndex);
+  } else if (levelIndex + 1 < levels.length) {
+    startLevel(levelIndex + 1);
+  } else {
+    startGame();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// *api* THE REAL-SIGN DEMO BOX (sign.mt)
+// ---------------------------------------------------------------------------
+
+//makes the box once, in setup(). it's a normal page element sitting on top of the canvas, like the buttons.
+function makeDemoBox() {
+  demoBox = createDiv("");
+  demoBox.parent("sketch-holder");
+  demoBox.style("position", "absolute");
+  demoBox.style("width", "240px");
+  demoBox.style("padding", "10px");
+  demoBox.style("border-radius", "12px");
+  demoBox.style("background", "rgb(240, 235, 255)");
+  demoBox.style("color", "rgb(70, 55, 120)");
+  demoBox.style("font-size", "12px");
+
+  //<pose-viewer> comes from the pose-viewer script in index.html. it plays a .pose file as a stick figure.
+  demoViewer = document.createElement("pose-viewer");
+  demoViewer.setAttribute("loop", "true");
+  demoViewer.setAttribute("width", "240px");
+  demoViewer.setAttribute("aspect-ratio", "1");
+  demoBox.elt.appendChild(demoViewer);
+
+  demoCaption = createDiv("");
+  demoCaption.parent(demoBox);
+
+  demoBox.hide();
+  placeDemoBox();
+}
+
+//top-right corner if the window is wide enough, otherwise under the game panel.
+function placeDemoBox() {
+  if (width >= 960) {
+    demoBox.position(width - 276, 16);
+  } else {
+    demoBox.position(16, 52 + gamePanelHeight() + 12);
+  }
+}
+
+//asks the API for the current sentence's sign and plays it. called at the start of every sentence.
+async function loadDemo() {
+  let level = levels[levelIndex];
+  if (!level.showDemo) {
+    demoBox.hide(); //level 3 is from memory, so no demo.
+    return;
+  }
+  demoBox.show();
+
+  let current = level.sentences[sentenceIndex];
+  let words = current.demo || current.sentence; //what to ask the API for.
+  demoCaption.html("loading the real sign...");
+
+  try {
+    if (!demoFiles[words]) {
+      //spoken=en means the text is English, signed=ase means American Sign Language.
+      let address = signApi + "?text=" + encodeURIComponent(words) + "&spoken=en&signed=ase";
+      //ask once first, to find out if the API is reachable. if it isn't, this jumps to the catch below.
+      let response = await fetch(address);
+      if (!response.ok) {
+        throw new Error("sign API answered " + response.status);
+      }
+      demoFiles[words] = address; //remember that this one works, so it's only checked once.
+    }
+    //if the game has moved on to another sentence while this was downloading, don't show the old one.
+    if (current !== levels[levelIndex].sentences[sentenceIndex]) {
+      return;
+    }
+    demoViewer.setAttribute("src", demoFiles[words]);
+    demoCaption.html('The real ASL sign for "' + words + '", machine-translated by sign.mt. Watch how it moves, then copy the hand shape.');
+  } catch (error) {
+    console.log("sign demo error:", error);
+    demoCaption.html("Couldn't load the real sign (is the internet on?). The game still works without it.");
+  }
+}
+
+//which fingers are up? gives 5 true / false values: thumb, index, middle, ring, pinky.
+//a finger is up when its tip is clearly further from the wrist than its middle joint.
+//(a folded finger's tip curls back towards the wrist.)
+function fingersUp(hand) {
+  let points = hand.keypoints;
+  let wrist = points[0];
+  let handSize = dist(wrist.x, wrist.y, points[9].x, points[9].y); //wrist to middle knuckle.
+
+  //the thumb folds sideways, not towards the wrist, so it's checked differently:
+  //it's up when its tip is far from the index finger's knuckle.
+  let thumb = dist(points[4].x, points[4].y, points[5].x, points[5].y) > handSize * 0.5;
+
+  let up = [thumb];
+  let tips = [8, 12, 16, 20]; //the hand points at the tips of the index, middle, ring and pinky fingers.
+  for (let tip of tips) {
+    let joint = points[tip - 2]; //the finger's middle joint is 2 points before its tip.
+    let tipDistance = dist(points[tip].x, points[tip].y, wrist.x, wrist.y);
+    let jointDistance = dist(joint.x, joint.y, wrist.x, wrist.y);
+    up.push(tipDistance > jointDistance * 1.1);
+  }
+  return up;
+}
+
+//is the hand making this shape? every finger the shape cares about has to match.
+function matchesShape(hand, shapeName) {
+  let wanted = handShapes[shapeName];
+  let up = fingersUp(hand);
+  for (let i = 0; i < wanted.length; i++) {
+    if (wanted[i] !== null && wanted[i] !== up[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+//words for what the camera sees, like "thumb + index up", so you can tell why a shape isn't counting.
+function describeHand(hand) {
+  let names = ["thumb", "index", "middle", "ring", "pinky"];
+  let up = fingersUp(hand);
+  let upNames = names.filter((name, i) => up[i]);
+  if (upNames.length === 0) {
+    return "a fist (no fingers up)";
+  }
+  return upNames.join(" + ") + " up";
+}
+
+//runs every frame in game mode: counts down the timer and checks the hand shape.
+function updateGame() {
+  //the clocks wait while paused, when the level is over, and until hand tracking has loaded.
+  if (!handPose || paused || gameState === "levelDone") {
+    return;
+  }
+  let level = levels[levelIndex];
+  let seconds = min(deltaTime / 1000, 0.1); //how long the last frame took. capped, so a frozen tab can't eat the timer.
+
+  if (gameState === "ready") {
+    waitLeft -= seconds;
+    if (waitLeft <= 0) {
+      gameState = "playing";
+    }
+    return;
+  }
+
+  if (gameState === "success" || gameState === "timeup") {
+    waitLeft -= seconds;
+    if (waitLeft <= 0) {
+      if (sentenceIndex + 1 < level.sentences.length) {
+        startSentence(sentenceIndex + 1);
+      } else {
+        gameState = "levelDone"; //*levels*
+        demoBox.hide(); //*api*
+      }
+    }
+    return;
+  }
+
+  //playing: the timer runs down.
+  timeLeft -= seconds;
+  if (timeLeft <= 0) {
+    timeLeft = 0;
+    sentenceResults.push(false);
+    waitLeft = messageSeconds;
+    gameState = "timeup";
+    return;
+  }
+
+  //holding the right shape fills the hold bar. letting go drains it (quickly, but not all at once,
+  //so one shaky frame doesn't throw away your hold).
+  let steps = level.sentences[sentenceIndex].steps;
+  if (smoothHand && matchesShape(smoothHand, steps[stepIndex].shape)) {
+    holdTime += seconds;
+  } else {
+    holdTime = max(0, holdTime - seconds * 2);
+  }
+
+  if (holdTime >= holdSeconds) {
+    stepIndex += 1; //that sign is done, on to the next one.
+    holdTime = 0;
+    if (stepIndex >= steps.length) {
+      //the whole sentence, in time: points, plus the bonus for the seconds left.
+      lastBonus = ceil(timeLeft) * bonusPerSecond;
+      score += level.points + lastBonus;
+      levelScore += level.points + lastBonus;
+      sentenceResults.push(true);
+      waitLeft = messageSeconds;
+      gameState = "success";
+    }
+  }
+}
+
+//the game's colours: pastel light purple and light blue, with dark purple writing.
+let gameInk = [70, 55, 120];
+let gamePaper = [240, 235, 255];
+let gameBlue = [150, 205, 250];
+let gamePurple = [190, 160, 245];
+
+//the panel is always the same height (tall enough for the longest sentence and for the longest end screen
+//in any level), so a shorter panel never leaves bits of a taller one behind on the canvas.
+function gamePanelHeight() {
+  let mostSteps = 0;
+  let mostSentences = 0;
+  for (let level of levels) {
+    mostSentences = max(mostSentences, level.sentences.length);
+    for (let sentence of level.sentences) {
+      mostSteps = max(mostSteps, sentence.steps.length);
+    }
+  }
+  return max(160 + mostSteps * 48, 170 + mostSentences * 20);
+}
+
+//the game panel, in the top-left corner under the buttons.
+function drawGamePanel() {
+  let left = 16;
+  let top = 52;
+  let panelWidth = min(660, width - 32);
+  let panelHeight = gamePanelHeight();
+  let level = levels[levelIndex];
+
+  push();
+  noStroke();
+  textAlign(LEFT, TOP);
+  fill(...gamePaper);
+  rect(left, top, panelWidth, panelHeight, 12);
+
+  if (gameState === "levelDone") {
+    drawLevelDone(left, top, panelWidth, panelHeight);
+    pop();
+    return;
+  }
+
+  let current = level.sentences[sentenceIndex];
+
+  //top row: which level and sentence, and the score.
+  fill(...gameInk);
+  textSize(14);
+  textStyle(BOLD);
+  text(
+    "LEVEL " + (levelIndex + 1) + " of " + levels.length + "  ·  " + level.name +
+      "  ·  " + (sentenceIndex + 1) + " of " + level.sentences.length,
+    left + 14,
+    top + 12,
+  );
+  textAlign(RIGHT, TOP);
+  text("score: " + score, left + panelWidth - 14, top + 12);
+
+  //the sentence, big, with the seconds left beside it.
+  textSize(22);
+  text(ceil(timeLeft) + " s", left + panelWidth - 14, top + 42);
+  textAlign(LEFT, TOP);
+  textSize(current.sentence.length > 28 ? 24 : 30); //long sentences get smaller writing, so they fit.
+  text(current.sentence, left + 14, top + 36);
+  textStyle(NORMAL);
+
+  //the timer bar: shrinks as time runs out, and goes from blue to purple.
+  let barWidth = panelWidth - 28;
+  let fraction = timeLeft / level.seconds; //1 = all the time left, 0 = none.
+  fill(222, 214, 246);
+  rect(left + 14, top + 80, barWidth, 10, 5);
+  fill(lerpColor(color(...gamePurple), color(...gameBlue), fraction));
+  rect(left + 14, top + 80, barWidth * fraction, 10, 5);
+
+  //one row for each sign in the sentence.
+  //*levels* level 3 hides how to make each sign. the hints come back when time runs out, so you can learn them.
+  let showHow = level.showHow || gameState === "timeup";
+  let rowHeight = 48;
+  for (let i = 0; i < current.steps.length; i++) {
+    let step = current.steps[i];
+    let rowTop = top + 102 + i * rowHeight;
+    let done = i < stepIndex;
+    let isCurrent = i === stepIndex && gameState === "playing";
+
+    if (isCurrent) {
+      fill(214, 232, 255); //the sign you're on lights up light blue.
+      rect(left + 8, rowTop - 4, panelWidth - 16, rowHeight - 4, 8);
+      //the hold bar, along the bottom of the row.
+      fill(...gamePurple);
+      rect(left + 8, rowTop + rowHeight - 14, (panelWidth - 16) * min(holdTime / holdSeconds, 1), 6, 3);
+    }
+
+    fill(...gameInk);
+    textSize(26);
+    if (done) {
+      text("✓", left + 16, rowTop + 2);
+    } else if (showHow) {
+      text(step.emoji, left + 16, rowTop + 2);
+    } else {
+      text("?", left + 20, rowTop + 2); //from memory: the emoji would give the shape away.
+    }
+    textSize(14);
+    textStyle(BOLD);
+    text(step.sign, left + 60, rowTop);
+    textStyle(NORMAL);
+    textSize(13);
+    text(showHow ? step.how : "from memory: which hand shape was it?", left + 60, rowTop + 18);
+  }
+
+  //the message line: what's happening right now.
+  let message;
+  if (!handPose) {
+    message = "loading hand tracking...";
+  } else if (paused) {
+    message = "paused";
+  } else if (gameState === "ready") {
+    message = "get ready... the timer starts in " + ceil(waitLeft);
+  } else if (gameState === "success") {
+    message = "Yes! +" + level.points + " points, +" + lastBonus + " time bonus";
+  } else if (gameState === "timeup") {
+    message = "Time's up! Have another look at the shapes above.";
+  } else if (smoothHand) {
+    message = "hold the shape until the bar fills. camera sees: " + describeHand(smoothHand);
+  } else {
+    message = "no hand found: hold your hand up to the camera";
+  }
+  let messageTop = top + panelHeight - 50;
+  fill(...gameInk);
+  textSize(14);
+  textStyle(BOLD);
+  text(message, left + 14, messageTop);
+  textStyle(NORMAL);
+  textSize(12);
+  text(
+    "Simplified one-hand shapes. Real ASL also uses movement, both hands and your face.",
+    left + 14,
+    messageTop + 24,
+  );
+  pop();
+}
+
+//*levels* the screen at the end of a level: the score, which sentences you finished in time, and what Enter does next.
+function drawLevelDone(left, top, panelWidth, panelHeight) {
+  let level = levels[levelIndex];
+  let learned = sentenceResults.filter((result) => result).length;
+  let lastLevel = levelIndex + 1 === levels.length;
+
+  fill(...gameInk);
+  textSize(14);
+  textStyle(BOLD);
+  text("LEVEL " + (levelIndex + 1) + " of " + levels.length + "  ·  " + level.name + "  ·  done!", left + 14, top + 12);
+  textSize(30);
+  text("Score: " + score, left + 14, top + 36);
+  textStyle(NORMAL);
+  textSize(14);
+  text(learned + " of " + level.sentences.length + " signed in time", left + 14, top + 80);
+
+  for (let i = 0; i < level.sentences.length; i++) {
+    let mark = sentenceResults[i] ? "✓" : "✗";
+    text(mark + "  " + level.sentences[i].sentence, left + 14, top + 108 + i * 20);
+  }
+
+  let next;
+  if (!levelPassed()) {
+    next = "Not quite half yet. Press Enter to try level " + (levelIndex + 1) + " again.";
+  } else if (lastLevel) {
+    next = "You finished all " + levels.length + " levels! Press Enter to play again from level 1.";
+  } else {
+    next = "Level passed! Press Enter for level " + (levelIndex + 2) + ".";
+  }
+  textStyle(BOLD);
+  text(next, left + 14, top + panelHeight - 30);
+  textStyle(NORMAL);
+}
+
 class Ball {
   constructor(x, y, r, c) {
     this.homeX = x; //its spot on the grid. it never drifts more than wander pixels from here.
@@ -585,7 +1150,7 @@ class Ball {
     this.r = r; //its normal radius, before pulsing.
     this.originalColor = c; //its own blue / purple. kept safe, so dehighlight() can put it back.
     this.color = c; //the colour it's drawn with right now.
-    this.highlightColor = color("red"); //the colour it shows when clicked or on the person.
+    this.highlightColor = color(255, 170, 205); //the colour it shows when clicked or on the person. //*game* was red, now a pastel pink
     this.clicked = false; //mousePressed() flips this.
     this.onBody = false; //true while the ball is over the person. draw() sets it every frame.
     //*change* smoother body outline: goes up towards 1 while the ball is on the person, down towards 0 when not.
