@@ -30,7 +30,9 @@
 // - *j* J is spotted from its movement: an I, then a swing of the pinky.
 // - *numbers* the Read button switches practice mode to reading numbers 0 to 9.
 // - *notes* practice mode writes down what you sign (letters join into words). S saves the record, and the
-//   Notes button in the bottom-right corner downloads your saved records as a .txt file.
+//   Notes button downloads your saved records as a .txt file.
+// - *simple* a simpler layout: buttons top-left (space bar pauses), one short help card on the left, and on the
+//   right the Notes button, what you've signed, and the real-sign box.
 //
 // REFERENCES
 // body segmentation: ml5.js example "bodySegmentation-mask-person", https://editor.p5js.org/ml5/sketches/h6TN8umP5
@@ -72,7 +74,6 @@ let eatenSpots = []; //*eat* the grid spots of the balls that got eaten, so new 
 
 //the pause button: stops the pulsing and the wobbling, press again to start them.
 let paused = false;
-let pauseButton;
 
 //*ui* the panels: soft see-through cards under the hand buttons, in the game's pastel colours.
 let helpButton;
@@ -349,54 +350,18 @@ function setup() {
 
   //the button sits on top of the canvas's top-left corner, so it's on screen even though the canvas fills the window.
   select("#sketch-holder").style("position", "relative"); //makes position() below measure from the holder's corner.
-  //*ui* the buttons are pastel hands (the "hand-button" style is in index.html), in a row along the top.
-  pauseButton = createButton("Pause");
-  pauseButton.parent("sketch-holder");
-  pauseButton.class("hand-button");
-  pauseButton.position(16, 10);
-  pauseButton.mousePressed(togglePause);
-
-  //*game* the game mode button, next to the pause button.
-  gameButton = createButton("Game: off");
-  gameButton.parent("sketch-holder");
-  gameButton.class("hand-button blue");
-  gameButton.position(108, 10);
-  gameButton.mousePressed(toggleGame);
-
-  //*ui* the help button hides the practice instructions, so they don't cover you.
-  helpButton = createButton("Help: on");
-  helpButton.parent("sketch-holder");
-  helpButton.class("hand-button pink");
-  helpButton.position(200, 10);
-  helpButton.mousePressed(toggleHelp);
-
-  //*chart* the ABC button shows the ASL alphabet chart.
-  chartButton = createButton("Chart: off");
-  chartButton.parent("sketch-holder");
-  chartButton.class("hand-button");
-  chartButton.position(292, 10);
-  chartButton.mousePressed(toggleChart);
+  //*ui* the buttons are pastel hands (the "hand-button" style is in index.html), in a row along the top-left.
+  //*simple* there's no Pause button any more: the space bar pauses (see keyPressed()), to keep the row short.
+  gameButton = makeHandButton("Game: off", "blue", toggleGame);
+  helpButton = makeHandButton("Help: on", "pink", toggleHelp); //hides the practice instructions.
+  chartButton = makeHandButton("Chart: off", "", toggleChart); //*chart* the ASL alphabet chart.
   makeChartBox();
+  fixButton = makeHandButton("Fix: off", "blue", toggleFix); //*fix* teach it how your hand makes a letter.
+  readButton = makeHandButton("Read: ABC", "pink", toggleNumbers); //*numbers* letters or numbers.
+  placeButtons();
 
-  //*fix* the Fix button: pauses the game and lets you teach it how your hand makes a letter.
-  fixButton = createButton("Fix: off");
-  fixButton.parent("sketch-holder");
-  fixButton.class("hand-button blue");
-  fixButton.position(384, 10);
-  fixButton.mousePressed(toggleFix);
-
-  //*numbers* the Read button switches practice mode between reading letters (ABC) and numbers (123).
-  readButton = createButton("Read: ABC");
-  readButton.parent("sketch-holder");
-  readButton.class("hand-button pink");
-  readButton.position(476, 10);
-  readButton.mousePressed(toggleNumbers);
-
-  //*notes* the Notes button, in the bottom-right corner: downloads your saved translations as a .txt file.
-  notesButton = createButton("Notes .txt");
-  notesButton.parent("sketch-holder");
-  notesButton.class("hand-button");
-  notesButton.mousePressed(downloadNotes);
+  //*notes* the Notes button, at the top of the right-hand column: downloads your saved translations as a .txt file.
+  notesButton = makeHandButton("Notes .txt", "", downloadNotes);
   placeNotesButton();
   makeDemoBox(); //*api*
 
@@ -935,31 +900,39 @@ function saveRecord() {
 }
 
 //the record so far, in a strip along the bottom of the canvas (left of the Notes button).
+//*simple* the right-hand column, from the top: the Notes button, this card, then the real-sign box.
+//it used to be a strip along the bottom, where it could end up behind you; now it's all together on the right.
+let rightColumnWidth = 260; //the same width as the real-sign box, so they line up.
+let notesCardTop = 122; //just under the Notes button.
+let notesCardHeight = 92;
+
 function drawTranslation() {
-  let left = 16;
-  let w = min(640, width - 140);
-  let top = height - 70;
+  let left = width - rightColumnWidth - 16;
+  let w = rightColumnWidth;
+  let top = notesCardTop;
   let shown = translation.length > 60 ? "..." + translation.slice(-60) : translation; //the end, if it's long.
 
   push();
   noStroke();
   fill(...gamePaper, panelAlpha);
-  softPanel(left, top, w, 54);
+  softPanel(left, top, w, notesCardHeight);
   fill(...gameInk);
   textAlign(LEFT, TOP);
-  textSize(16);
+  textSize(11);
   textStyle(BOLD);
-  text(shown || "...", left + 14, top + 8, w - 28);
+  text("WHAT YOU SIGNED", left + 14, top + 10);
+  textSize(15);
+  text(shown || "...", left + 14, top + 28, w - 28); //wraps onto 2 lines if it needs to.
   textStyle(NORMAL);
   textSize(11);
-  let status = millis() < savedMessageUntil ? "saved!" : "S = save this record";
-  text(status + "   ·   " + savedRecords.length + " saved   ·   Notes button = download", left + 14, top + 34);
+  let status = millis() < savedMessageUntil ? "saved!" : "S = save";
+  text(status + "  ·  " + savedRecords.length + " saved  ·  Notes = download", left + 14, top + notesCardHeight - 22);
   pop();
 }
 
-//the Notes button sits in the bottom-right corner of the canvas.
+//the Notes button sits at the top of the right-hand column.
 function placeNotesButton() {
-  notesButton.position(width - 100, height - 116);
+  notesButton.position(width - 100, 10);
 }
 
 //downloads every saved record (and the one you're writing now) as a .txt file.
@@ -1067,32 +1040,44 @@ function softPanel(x, y, w, h) {
   rect(x, y, w, h, 18 + sin(t) * 5, 10 + sin(t + 1.7) * 4, 22 + sin(t + 3.1) * 5, 9 + sin(t + 4.4) * 4);
 }
 
-//pause: everything freezes where it is. play: it carries on from there.
+//*simple* every hand button, so they can be laid out and clicked the same way.
+let handButtons = [];
+
+//makes one pastel hand button. colour is "", "blue" or "pink" (the styles are in index.html).
+function makeHandButton(label, colour, whenClicked) {
+  let button = createButton(label);
+  button.parent("sketch-holder");
+  button.class(("hand-button " + colour).trim());
+  button.mousePressed(whenClicked);
+  handButtons.push(button);
+  return button;
+}
+
+//*simple* puts the top-left buttons in a row, skipping hidden ones, so there are no gaps.
+//(in game mode, Help and Read are hidden.)
+function placeButtons() {
+  let x = 16;
+  for (let button of [gameButton, helpButton, chartButton, fixButton, readButton]) {
+    if (button.elt.style.display !== "none") {
+      button.position(x, 10);
+      x += 92;
+    }
+  }
+}
+
+//pause: everything freezes where it is. play: it carries on from there. *simple* the space bar does this now.
 function togglePause() {
   paused = !paused;
-  if (paused) {
-    pauseButton.html("Play");
-  } else {
-    pauseButton.html("Pause");
-  }
 }
 
 //click a ball to turn it red. click it again to turn it back.
 function mousePressed(event) {
   userStartAudio(); //*sound* browsers block sound until the user clicks; this switches it on.
 
-  //clicks on the pause button come here too. this skips them, so the ball under the button doesn't turn red.
+  //clicks on the buttons come here too. this skips them, so the ball under a button doesn't turn red.
   //*chart* clicks (or scrolls) on the chart card count as on a button too.
   let onButton =
-    event &&
-    (event.target === pauseButton.elt ||
-      event.target === gameButton.elt ||
-      event.target === helpButton.elt ||
-      event.target === chartButton.elt ||
-      event.target === fixButton.elt ||
-      event.target === readButton.elt ||
-      event.target === notesButton.elt ||
-      chartBox.elt.contains(event.target));
+    event && (handButtons.some((button) => button.elt === event.target) || chartBox.elt.contains(event.target));
   if (onButton) {
     return;
   }
@@ -1455,6 +1440,11 @@ function currentCompliment() {
 
 //*change* Enter: train on the examples. Backspace: start over.
 function keyPressed() {
+  //*simple* space pauses and plays, in both modes (it replaced the Pause button).
+  if (key === " ") {
+    togglePause();
+    return false; //stops the page from scrolling down too.
+  }
   //*game* in game mode the teaching keys do nothing.
   //*levels* Enter moves on when a level is done, and 1, 2, 3 jump straight to a level.
   //*fix* in Fix mode the teaching keys work in the game too (Enter and Backspace below), and the game keys don't.
@@ -1579,140 +1569,67 @@ function drawHand() {
   pop();
 }
 
-//*change* the box in the top-left corner (under the Pause button): instructions and example counts.
-//the guess is shown big in the top-right corner. both sit at the top so you can see them without scrolling.
+//*change* the box in the top-left corner: instructions and example counts.
+//*simple* one short card now (it used to be 2 long panels and a big guess card in the top-right corner).
+//what it reads floats above your hand instead, and what you've signed is in the right-hand column.
 function drawSignPanel() {
+  if (!showHelp || showChart || fixing) {
+    return; //*chart* the chart goes here when it's open, and *fix* the Fix panel goes here while it's on.
+  }
   let lines = [];
+  lines.push("sign a letter: it shows above your hand, and hold it to write it down.");
+  lines.push("hand down = space · S = save · space bar = pause");
+  lines.push("read wrong? press Fix to teach it your hand.");
+  //what's happening right now.
   if (!handPose) {
     lines.push("loading hand tracking...");
-  } else if (modelState === "collecting") {
-    //*ui* shorter lines, so they fit the narrower panel.
-    //*notes* letters are taught in Fix mode now; S saves your translation.
-    lines.push("it reads letters (Read: 123 for numbers). S saves what you signed.");
-    lines.push("compliments: make one and HOLD its key 1-4 (50+ each, 2+), then Enter.");
-    lines.push("letter read wrong? press Fix to teach it your hand.");
-    //*change* compliments show their emoji instead of their number.
-    let counts = Object.entries(sampleCounts).map((entry) => {
-      let compliment = findCompliment(entry[0]);
-      let name = compliment ? compliment.emoji : entry[0];
-      return name + ": " + entry[1];
-    });
-    lines.push(counts.length > 0 ? counts.join("   ") : "no examples yet");
-    lines.push(smoothHand ? "hand found" : "no hand found: hold your hand up");
   } else if (modelState === "training") {
-    lines.push("training... round " + trainingRound + " of " + trainingRounds);
+    lines.push("learning your compliments... round " + trainingRound + " of " + trainingRounds);
+  } else if (!smoothHand) {
+    lines.push("no hand found: hold your hand up");
   } else {
-    lines.push("ready! make a hand shape. (Backspace = start over)");
-    //*fix* always show what it's seeing right now, even when it's not sure enough to show a compliment,
-    //so you can tell whether it's working but unsure, or not seeing your hand at all.
-    if (!smoothHand) {
-      lines.push("no hand found: hold your hand up");
-    } else if (prediction) {
-      let compliment = findCompliment(prediction.label);
-      let name = compliment ? compliment.emoji + " " + compliment.name : prediction.label;
-      lines.push("seeing: " + name + "  (" + round(prediction.confidence * 100) + "% sure)");
-    }
+    lines.push(paused ? "paused" : "hand found");
   }
   if (warning) {
     lines.push(warning); //*fix*
   }
 
-  //*ui* the same soft pastel card as the game panel, and narrower, so it covers less of you.
   let w = min(panelWidth, width - 32);
-  push();
-  noStroke();
-  textAlign(LEFT, TOP);
-
-  //*chart* the alphabet chart sits where the instructions go, so they hide while it's open.
-  if (showHelp && !showChart && !fixing) { //*fix* the Fix panel goes here instead while it's on
-    //worked out first, so the compliment guide can go right under it. a warning is long, so it gets room for 2 lines.
-    let boxHeight = 44 + lines.length * 19 + (warning ? 19 : 0);
-    fill(...gamePaper, panelAlpha);
-    softPanel(16, panelTop, w, boxHeight);
-    fill(...gameInk);
-    textSize(14);
-    textStyle(BOLD);
-    text("SIGN PRACTICE", 30, panelTop + 12);
-    textStyle(NORMAL);
-    textSize(12);
-    for (let i = 0; i < lines.length; i++) {
-      text(lines[i], 30, panelTop + 34 + i * 19, w - 28);
-    }
-    drawComplimentGuide(panelTop + boxHeight + 10); //*change*
-  }
-
-  //the guess, in the top-right corner.
-  //*change* uses the steadier guess. a compliment shows its emoji and full sentence; a letter shows the letter.
-  //*ui* a smaller card than before, with the sentence wrapped onto two lines, so it doesn't stretch across you.
-  let compliment = currentCompliment();
-  let guessWidth = compliment ? 300 : 130;
-  let guessLeft = width - guessWidth - 16;
-  if (compliment || (modelState === "ready" && shownGuess)) {
-    fill(...gamePaper, panelAlpha);
-    softPanel(guessLeft, 16, guessWidth, compliment ? 170 : 140);
-    fill(...gameInk);
-  }
-  if (compliment) {
-    textAlign(CENTER, TOP);
-    textSize(52);
-    text(compliment.emoji, guessLeft + guessWidth / 2, 24);
-    textSize(18);
-    textStyle(BOLD);
-    text(compliment.sentence, guessLeft + 16, 92, guessWidth - 32);
-    textStyle(NORMAL);
-    textSize(12);
-    text(round(shownGuess.confidence * 100) + "% sure", guessLeft + guessWidth / 2, 146);
-  } else if (modelState === "ready" && shownGuess && !findCompliment(shownGuess.label)) {
-    textAlign(CENTER, TOP);
-    textSize(72);
-    text(shownGuess.label, guessLeft + guessWidth / 2, 22);
-    textSize(13);
-    text(round(shownGuess.confidence * 100) + "% sure", guessLeft + guessWidth / 2, 112);
-  }
-  pop();
-}
-
-//*change* the compliment guide: one row per gesture, with its emoji, key, how to make it, and its sentence.
-//it sits under the instructions box. the row it's seeing right now lights up pink.
-//*ui* same soft pastel card as the game panel. each row: the emoji, the key and name, and how to make it
-//(wrapped onto two lines). the sentence isn't listed here: it shows up big in the corner when it sees the gesture.
-function drawComplimentGuide(top) {
-  let rowHeight = 50;
-  let boxWidth = min(panelWidth, width - 32);
-  let boxHeight = 38 + compliments.length * rowHeight;
-  let showing = currentCompliment();
-
+  let boxHeight = 106 + lines.length * 18 + (warning ? 18 : 0);
   push();
   noStroke();
   fill(...gamePaper, panelAlpha);
-  softPanel(16, top, boxWidth, boxHeight);
-
+  softPanel(16, panelTop, w, boxHeight);
   fill(...gameInk);
   textAlign(LEFT, TOP);
   textSize(14);
   textStyle(BOLD);
-  text("COMPLIMENTS: hold a number key to teach", 30, top + 12);
+  text("SIGN PRACTICE", 30, panelTop + 12);
   textStyle(NORMAL);
+  textSize(11.5);
+  for (let i = 0; i < lines.length; i++) {
+    text(lines[i], 30, panelTop + 34 + i * 18, w - 28);
+  }
 
+  //*simple* the compliments, as one row of emoji. the one it sees lights up; how many examples each has is below it.
+  let rowTop = panelTop + boxHeight - 66;
+  textStyle(BOLD);
+  text(modelState === "ready" ? "compliments (Backspace = start over):" : "compliments: hold 1-4 while making one, then Enter", 30, rowTop);
+  textStyle(NORMAL);
+  let showing = currentCompliment();
   for (let i = 0; i < compliments.length; i++) {
     let compliment = compliments[i];
-    let rowTop = top + 36 + i * rowHeight;
-
-    //the row it's seeing right now lights up light blue, like the sign you're on in the game.
+    let x = 30 + i * 84;
     if (showing === compliment) {
       fill(214, 232, 255);
-      rect(22, rowTop - 3, boxWidth - 12, rowHeight - 4, 8);
+      rect(x - 6, rowTop + 16, 76, 44, 10);
+      fill(...gameInk);
     }
-
-    fill(...gameInk);
-    textSize(24);
-    text(compliment.emoji, 30, rowTop + 4);
-    textSize(12);
-    textStyle(BOLD);
-    text("[" + compliment.key + "]  " + compliment.name, 70, rowTop);
-    textStyle(NORMAL);
+    textSize(22);
+    text(compliment.emoji, x, rowTop + 20);
     textSize(11);
-    text(compliment.how, 70, rowTop + 16, boxWidth - 70);
+    let saved = sampleCounts[compliment.key] || 0;
+    text("[" + compliment.key + "] " + (modelState === "collecting" ? saved : ""), x + 32, rowTop + 26);
   }
   pop();
 }
@@ -1735,6 +1652,7 @@ function toggleGame() {
   gameButton.html(gameOn ? "Game: on" : "Game: off");
   helpButton.style("display", gameOn ? "none" : ""); //*ui* the game always shows its panel, so help only matters in practice.
   readButton.style("display", gameOn ? "none" : ""); //*numbers* the game reads letters and signs only.
+  placeButtons(); //*simple* close the gaps left by the hidden buttons.
   if (gameOn) {
     startGame();
   } else {
@@ -1824,12 +1742,12 @@ function makeDemoBox() {
 }
 
 //top-right corner if the window is wide enough, otherwise under the game panel.
-//*ui* in practice mode, it goes in the top-right corner under the guess card.
+//*simple* both modes: in the right-hand column, under the Notes button (and, in practice, under what you signed).
 function placeDemoBox() {
   if (!gameOn) {
-    demoBox.position(max(16, width - 276), 200);
+    demoBox.position(max(16, width - 276), notesCardTop + notesCardHeight + 12);
   } else if (width >= 960) {
-    demoBox.position(width - 276, 16);
+    demoBox.position(width - 276, notesCardTop);
   } else {
     demoBox.position(16, panelTop + gamePanelHeight() + 12);
   }
