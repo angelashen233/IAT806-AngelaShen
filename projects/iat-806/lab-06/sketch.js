@@ -28,6 +28,9 @@
 // - *mirror* the camera is shown like a mirror.
 // - *fix* the Fix button pauses the game so you can teach it how your hand makes letters it reads wrong.
 // - *j* J is spotted from its movement: an I, then a swing of the pinky.
+// - *numbers* the Read button switches practice mode to reading numbers 0 to 9.
+// - *notes* practice mode writes down what you sign (letters join into words). S saves the record, and the
+//   Notes button in the bottom-right corner downloads your saved records as a .txt file.
 //
 // REFERENCES
 // body segmentation: ml5.js example "bodySegmentation-mask-person", https://editor.p5js.org/ml5/sketches/h6TN8umP5
@@ -368,7 +371,7 @@ function setup() {
   helpButton.mousePressed(toggleHelp);
 
   //*chart* the ABC button shows the ASL alphabet chart.
-  chartButton = createButton("ABC: off");
+  chartButton = createButton("Chart: off");
   chartButton.parent("sketch-holder");
   chartButton.class("hand-button");
   chartButton.position(292, 10);
@@ -381,6 +384,20 @@ function setup() {
   fixButton.class("hand-button blue");
   fixButton.position(384, 10);
   fixButton.mousePressed(toggleFix);
+
+  //*numbers* the Read button switches practice mode between reading letters (ABC) and numbers (123).
+  readButton = createButton("Read: ABC");
+  readButton.parent("sketch-holder");
+  readButton.class("hand-button pink");
+  readButton.position(476, 10);
+  readButton.mousePressed(toggleNumbers);
+
+  //*notes* the Notes button, in the bottom-right corner: downloads your saved translations as a .txt file.
+  notesButton = createButton("Notes .txt");
+  notesButton.parent("sketch-holder");
+  notesButton.class("hand-button");
+  notesButton.mousePressed(downloadNotes);
+  placeNotesButton();
   makeDemoBox(); //*api*
 
   makeBalls();
@@ -456,6 +473,7 @@ function windowResized() {
   makeBalls();
   placeDemoBox(); //*api*
   placeChartBox(); //*chart*
+  placeNotesButton(); //*notes*
 }
 
 //a random colour somewhere between pastel light blue and pastel light purple.
@@ -739,6 +757,8 @@ function draw() {
   }
   drawHandLabel(); //*ui*
   updatePracticeDemo(); //*ui*
+  updateTranslation(); //*notes*
+  drawTranslation(); //*notes*
 }
 
 // ---------------------------------------------------------------------------
@@ -809,6 +829,167 @@ function drawFixPanel() {
   pop();
 }
 
+// ---------------------------------------------------------------------------
+// *numbers* READING NUMBERS 0 TO 9 (practice mode)
+// the letter model only knows A to Z, and ASL numbers share hand shapes with letters (2 looks like V, 6 like W,
+// 9 like F), so numbers have their own switch: the Read button. these rules look at which fingers are up
+// (fingersUp(), from the game) and which fingertip the thumb is touching.
+// ---------------------------------------------------------------------------
+let readButton;
+let readNumbers = false; //false = read letters, true = read numbers.
+
+function toggleNumbers() {
+  readNumbers = !readNumbers;
+  readButton.html(readNumbers ? "Read: 123" : "Read: ABC");
+  letterHistory = []; //start fresh, so a letter doesn't turn into a number.
+}
+
+//which number 0 to 9 is this hand showing? "" if none.
+function handNumber(hand) {
+  let p = hand.keypoints;
+  let handSize = dist(p[0].x, p[0].y, p[9].x, p[9].y);
+  //is the thumb tip touching this fingertip? (closer than a third of the hand's size)
+  let touching = (tip) => dist(p[4].x, p[4].y, p[tip].x, p[tip].y) < handSize * 0.35;
+  let up = fingersUp(hand); //thumb, index, middle, ring, pinky
+  let fingers = up.slice(1).map((isUp) => (isUp ? "1" : "0")).join(""); //index, middle, ring, pinky, like "1100"
+
+  if (fingers === "0000" && touching(8)) return "0"; //all fingers curled round to the thumb, like an O
+  if (fingers === "1000" && !up[0]) return "1"; //index up
+  if (fingers === "1100" && !up[0]) return "2"; //index and middle up
+  if (fingers === "1100" && up[0]) return "3"; //thumb, index and middle up
+  if (fingers === "1111" && !up[0]) return "4"; //4 fingers up, thumb tucked in
+  if (fingers === "1111" && up[0]) return "5"; //everything up
+  if (fingers === "1110" && touching(20)) return "6"; //thumb touches pinky
+  if (fingers === "1101" && touching(16)) return "7"; //thumb touches ring finger
+  if (fingers === "1011" && touching(12)) return "8"; //thumb touches middle finger
+  if (fingers === "0111" && touching(8)) return "9"; //thumb touches index finger
+  return "";
+}
+
+// ---------------------------------------------------------------------------
+// *notes* THE TRANSLATION RECORD (practice mode)
+// what you sign is written down as you go: letters join into words, a compliment adds its sentence,
+// and putting your hand down for a second adds a space. press S to save that record and start a new one.
+// the Notes button (bottom-right) downloads everything you saved as a .txt file.
+// ---------------------------------------------------------------------------
+let notesButton;
+let translation = ""; //the record being written right now.
+let recordStart = new Date(); //when it started.
+let savedRecords = []; //the records saved with S: { start, end, text }.
+let writeSeconds = 0.6; //how long a sign has to be held before it's written down, so passing shapes don't count.
+let signHeld = ""; //the sign being held right now...
+let signHeldSince = 0; //...and since when (in millis).
+let lastWritten = ""; //the last sign written down, so holding one sign writes it once.
+let handGoneSince = 0; //when the hand left the camera (in millis), or 0 while it's there.
+let savedMessageUntil = 0; //shows "saved!" until this time.
+
+//runs every frame in practice mode: writes down signs you hold, and adds spaces between words.
+function updateTranslation() {
+  if (!smoothHand) {
+    if (handGoneSince === 0) {
+      handGoneSince = millis();
+    }
+    //hand down for a second: end of a word.
+    if (millis() - handGoneSince > 1000 && translation !== "" && !translation.endsWith(" ")) {
+      translation += " ";
+    }
+    signHeld = "";
+    lastWritten = "";
+    return;
+  }
+  handGoneSince = 0;
+
+  let sign = currentHandSign();
+  let words = sign ? sign.words : "";
+  if (words !== signHeld) {
+    signHeld = words; //a new sign: start timing it.
+    signHeldSince = millis();
+    return;
+  }
+  let heldLongEnough = millis() - signHeldSince > writeSeconds * 1000;
+  if (!heldLongEnough) {
+    return;
+  }
+  if (words === "") {
+    lastWritten = ""; //a relaxed hand in between lets you write the same letter twice, like the L L in HELLO.
+  } else if (words !== lastWritten) {
+    let isSentence = words.length > 1; //a compliment's sentence, not a single letter or number.
+    if (isSentence) {
+      translation += (translation === "" || translation.endsWith(" ") ? "" : " ") + words + " ";
+    } else {
+      translation += words;
+    }
+    lastWritten = words;
+  }
+}
+
+//S: saves the record so far and starts a new one.
+function saveRecord() {
+  if (translation.trim() === "") {
+    return;
+  }
+  savedRecords.push({ start: recordStart, end: new Date(), text: translation.trim() });
+  translation = "";
+  recordStart = new Date();
+  savedMessageUntil = millis() + 1500;
+}
+
+//the record so far, in a strip along the bottom of the canvas (left of the Notes button).
+function drawTranslation() {
+  let left = 16;
+  let w = min(640, width - 140);
+  let top = height - 70;
+  let shown = translation.length > 60 ? "..." + translation.slice(-60) : translation; //the end, if it's long.
+
+  push();
+  noStroke();
+  fill(...gamePaper, panelAlpha);
+  softPanel(left, top, w, 54);
+  fill(...gameInk);
+  textAlign(LEFT, TOP);
+  textSize(16);
+  textStyle(BOLD);
+  text(shown || "...", left + 14, top + 8, w - 28);
+  textStyle(NORMAL);
+  textSize(11);
+  let status = millis() < savedMessageUntil ? "saved!" : "S = save this record";
+  text(status + "   ·   " + savedRecords.length + " saved   ·   Notes button = download", left + 14, top + 34);
+  pop();
+}
+
+//the Notes button sits in the bottom-right corner of the canvas.
+function placeNotesButton() {
+  notesButton.position(width - 100, height - 116);
+}
+
+//downloads every saved record (and the one you're writing now) as a .txt file.
+function downloadNotes() {
+  let time = (date) => date.toLocaleTimeString();
+  let lines = ["Sign language notes, " + new Date().toLocaleString(), ""];
+  savedRecords.forEach((record, i) => {
+    lines.push("Record " + (i + 1) + " (" + time(record.start) + " to " + time(record.end) + "):");
+    lines.push(record.text);
+    lines.push("");
+  });
+  if (translation.trim() !== "") {
+    lines.push("Not saved yet (" + time(recordStart) + " to " + time(new Date()) + "):");
+    lines.push(translation.trim());
+    lines.push("");
+  }
+  if (lines.length === 2) {
+    lines.push("Nothing recorded yet. Sign in practice mode, then press S to save a record.");
+  }
+  lines.push("These are AI readings, so some letters may be wrong.");
+
+  //makes a file in the browser and clicks a hidden link to download it.
+  let file = new Blob([lines.join("\n")], { type: "text/plain" });
+  let link = document.createElement("a");
+  link.href = URL.createObjectURL(file);
+  link.download = "sign-notes.txt";
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
 //*sound* plays a sound, but only once it has loaded (before that, the variable is still undefined).
 //*fix* also waits until sound is allowed: browsers block it until the first click, and trying before that
 //threw an error (the "hand found" sound often comes before any click).
@@ -832,7 +1013,7 @@ function toggleHelp() {
 //*chart* shows or hides the alphabet chart.
 function toggleChart() {
   showChart = !showChart;
-  chartButton.html(showChart ? "ABC: on" : "ABC: off");
+  chartButton.html(showChart ? "Chart: on" : "Chart: off");
   if (showChart) {
     chartBox.show();
     placeChartBox();
@@ -909,6 +1090,8 @@ function mousePressed(event) {
       event.target === helpButton.elt ||
       event.target === chartButton.elt ||
       event.target === fixButton.elt ||
+      event.target === readButton.elt ||
+      event.target === notesButton.elt ||
       chartBox.elt.contains(event.target));
   if (onButton) {
     return;
@@ -1001,7 +1184,8 @@ function collectSample() {
   }
 
   let label;
-  if (key.length === 1 && /[a-z]/i.test(key)) {
+  //*notes* letters are only taught in Fix mode, so letter keys like S (save) are free the rest of the time.
+  if (key.length === 1 && /[a-z]/i.test(key) && fixing) {
     label = key.toUpperCase(); //a letter, for fingerspelling.
   } else if (findCompliment(key)) {
     label = key; //*change* a number key 1 to 4, for a compliment gesture.
@@ -1214,7 +1398,22 @@ function steadyLetter() {
     pinkyTrail = []; //*j*
     return "";
   }
-  //*j* an I, then a pinky swing: show J for a second.
+  //*numbers* in number mode, it reads numbers instead (and there's no J to spot).
+  if (readNumbers) {
+    letterHistory.push(handNumber(smoothHand));
+  } else {
+    letterHistory.push(readLetterWithJ());
+  }
+  if (letterHistory.length > lettersToKeep) {
+    letterHistory.shift(); //forget the oldest one.
+  }
+  let latest = letterHistory[letterHistory.length - 1];
+  let agreeing = letterHistory.filter((letter) => letter === latest).length;
+  return latest !== "" && (latest === "J" || agreeing * 2 > letterHistory.length) ? latest : "";
+}
+
+//*j* reads a letter with the model, and turns an I followed by a pinky swing into J (shown for a second).
+function readLetterWithJ() {
   let letter = modelLetter(smoothHand);
   if (spottedJ(smoothHand, letter)) {
     jShownUntil = millis() + 1000;
@@ -1222,13 +1421,7 @@ function steadyLetter() {
   if (millis() < jShownUntil) {
     return "J";
   }
-  letterHistory.push(letter);
-  if (letterHistory.length > lettersToKeep) {
-    letterHistory.shift(); //forget the oldest one.
-  }
-  let latest = letterHistory[letterHistory.length - 1];
-  let agreeing = letterHistory.filter((letter) => letter === latest).length;
-  return latest !== "" && agreeing * 2 > letterHistory.length ? latest : "";
+  return letter;
 }
 
 //*letters* what the hand is signing right now, for the label above your hand and the demo box:
@@ -1280,6 +1473,10 @@ function keyPressed() {
   }
   if (key === "Backspace") {
     newSignModel();
+  }
+  //*notes* S saves the translation record. (in Fix mode, S is for teaching the letter S instead.)
+  if ((key === "s" || key === "S") && !fixing) {
+    saveRecord();
   }
 }
 
@@ -1390,8 +1587,10 @@ function drawSignPanel() {
     lines.push("loading hand tracking...");
   } else if (modelState === "collecting") {
     //*ui* shorter lines, so they fit the narrower panel.
-    lines.push("make a hand shape and HOLD its key (a letter, or 1-4)");
-    lines.push("save 50+ of each, for 2+ signs. then press Enter to train.");
+    //*notes* letters are taught in Fix mode now; S saves your translation.
+    lines.push("it reads letters (Read: 123 for numbers). S saves what you signed.");
+    lines.push("compliments: make one and HOLD its key 1-4 (50+ each, 2+), then Enter.");
+    lines.push("letter read wrong? press Fix to teach it your hand.");
     //*change* compliments show their emoji instead of their number.
     let counts = Object.entries(sampleCounts).map((entry) => {
       let compliment = findCompliment(entry[0]);
@@ -1535,6 +1734,7 @@ function toggleGame() {
   gameOn = !gameOn;
   gameButton.html(gameOn ? "Game: on" : "Game: off");
   helpButton.style("display", gameOn ? "none" : ""); //*ui* the game always shows its panel, so help only matters in practice.
+  readButton.style("display", gameOn ? "none" : ""); //*numbers* the game reads letters and signs only.
   if (gameOn) {
     startGame();
   } else {
@@ -1699,9 +1899,10 @@ function updatePracticeDemo() {
 }
 
 //*ui* the sign it recognises, in a bubble just above your hand, so it follows your hand around.
+//*notes* it shows with help on or off, so you always see what it reads.
 function drawHandLabel() {
   let sign = currentHandSign(); //*letters*
-  if (!showHelp || !sign || !smoothHand || !video || video.width === 0) {
+  if (!sign || !smoothHand || !video || video.width === 0) {
     return;
   }
   let fit = videoFit();
@@ -1722,6 +1923,15 @@ function drawHandLabel() {
   textStyle(BOLD);
   textSize(isEmoji ? 30 : 32);
   text(label, x, y + 2);
+  //*notes* a compliment also shows its sentence, in a little card under the bubble.
+  if (isEmoji) {
+    textSize(13);
+    let w = textWidth(sign.words) + 20;
+    fill(...gamePaper, panelAlpha);
+    rect(x - w / 2, y + 34, w, 24, 12);
+    fill(...gameInk);
+    text(sign.words, x, y + 46);
+  }
   pop();
 }
 
