@@ -27,6 +27,10 @@
     <script src="https://cdn.jsdelivr.net/npm/p5.sound@0.4.1/dist/p5.sound.min.js"></script>
     <!-- ml5.js: body segmentation, hand tracking and the sign classifier. Has to come after p5. -->
     <script src="https://unpkg.com/ml5@1.4.0/dist/ml5.js"></script>
+    <!-- face-api.js: finds your face and reads your smile. https://justadudewhohacks.github.io/face-api.js/docs/index.html
+         this is @vladmandic/face-api, an updated copy with the same commands. the original (0.22.2) uses an old TensorFlow
+         that crashes next to ml5's newer one ("forwardFunc is not a function"). https://github.com/vladmandic/face-api -->
+    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.js"></script>
 
     <!-- pose-viewer: plays the real-sign animations that game mode gets from sign.mt's free API. -->
     <script

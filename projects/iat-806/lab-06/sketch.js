@@ -11,9 +11,12 @@
 // - *game* even smaller balls, in pastel light blue and light purple.
 // - *levels* the game has 3 levels: 1 single signs, 2 short sentences, 3 longer sentences from memory.
 // - *api* in levels 1 and 2, a box shows the real ASL sign as a moving stick figure. it comes from sign.mt's free API.
-// - *eat* in game mode, the balls on your body grow to cover it (but not your hand), so you focus on the hand shape.
-//   each sign you finish eats some of them (splice), so you see more of yourself. they come back (push) for the next sentence.
+// - *eat* in game mode, each sign you finish eats some of the balls on your body (splice), from your hand outwards.
+//   they come back (push) for the next sentence.
+// - *smile* face-api.js watches your face. when you smile, every ball blooms into a little flower, brighter and more
+//   colourful the bigger the smile. stop smiling and they close back into balls.
 // - *sound* sound effects: a whoosh when a hand shows up, a chime for each correct sign, and a level up sound when you pass a level.
+// - *flower* when you pass a level, a flower opens behind you and the balls turn off until the next level.
 //
 // REFERENCES
 // body segmentation: ml5.js example "bodySegmentation-mask-person", https://editor.p5js.org/ml5/sketches/h6TN8umP5
@@ -21,6 +24,10 @@
 // ml5.js license and Code of Conduct: https://github.com/ml5js/ml5-next-gen/blob/main/LICENSE.md
 // *api* the real-sign animations: sign.mt, an open-source sign language translator, https://sign.mt/
 // and its pose-viewer component (loaded in index.html), https://www.npmjs.com/package/pose-viewer
+// *smile* face detection and smile (expression) tracking: face-api.js by Vincent Mühler (justadudewhohacks),
+// its tiny face detector and face expression models, https://justadudewhohacks.github.io/face-api.js/docs/index.html
+// (code: https://github.com/justadudewhohacks/face-api.js). loaded through @vladmandic/face-api 1.7.15 by Vladimir Mandic,
+// an updated version of face-api.js that works alongside ml5, https://github.com/vladmandic/face-api
 
 //settings: change these to see what happens.
 let spacing = 20; //how many pixels apart the balls' spots are. smaller = more balls (but slower: 16 dropped to ~10 fps).
@@ -30,8 +37,13 @@ let pulseAmount = 1; //how many pixels bigger and smaller each ball gets as it p
 let wander = 1.5; //how many pixels a ball can drift away from its spot.
 let minRadius = 1.5; //*change* the smallest and biggest a ball can be (its radius, before pulsing).
 let maxRadius = 3.5;
-let coverRadius = 15; //*eat* how big a ball grows when it covers your body. bigger than spacing / 2, so they overlap with no gaps.
-let handMargin = 40; //*eat* how many pixels around your hand stay uncovered.
+
+//*smile* smile tracking with face-api.js.
+let faceModels = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model"; //where its trained models are downloaded from.
+let smileTarget = 0; //how much you're smiling in the latest check, 0 to 1 (face-api's "happy" score).
+let smile = 0; //the same, but eased towards smileTarget every frame, so the balls brighten smoothly instead of flickering.
+let smileChecksPerSecond = 10; //how often it looks for your smile. a smile doesn't need more, and it leaves the computer free for hand tracking.
+let flowerPetals = 5; //how many petals each little ball-flower has when it blooms.
 
 let myBalls = [];
 let eatenSpots = []; //*eat* the grid spots of the balls that got eaten, so new balls can come back to the same places.
@@ -123,6 +135,12 @@ let handSound; //a hand showed up in front of the camera.
 let correctSound; //you held a sign's hand shape long enough: that sign is done.
 let handSoundGap = 1; //how many seconds the hand has to be gone before it plays handSound again, so a flicker doesn't replay it.
 let handLostTime = -10000; //when the hand was last lost (in millis). starts long ago, so the first hand plays the sound.
+
+//*flower* the flower that opens behind you when you pass a level.
+let bloomSeconds = 2.5; //how long it takes to open all the way.
+let petalCount = 10; //how many petals in each ring.
+let bloom = 0; //0 = a closed bud, 1 = wide open.
+let flowerLayer; //a separate drawing the size of the camera, so the person can be cut out of it with the mask.
 
 //the hand shapes the game can check. each one says which fingers should be up, in the order
 //thumb, index, middle, ring, pinky. true = up, false = folded, null = doesn't matter.
@@ -271,6 +289,29 @@ async function startCamera() {
   //*change* hand tracking, on the same camera. one hand is enough for fingerspelling.
   handPose = await ml5.handPose({ maxHands: 1 });
   handPose.detectStart(video, gotHands);
+
+  //*smile* face-api.js needs two models: one to find your face, and one to read its expression.
+  await faceapi.nets.tinyFaceDetector.loadFromUri(faceModels);
+  await faceapi.nets.faceExpressionNet.loadFromUri(faceModels);
+  checkSmile();
+}
+
+//*smile* looks for your face and reads how much you're smiling, then does it again a moment later.
+//face-api doesn't have a detectStart() like ml5, so this keeps calling itself instead.
+async function checkSmile() {
+  //readyState 2 or more means the camera has a picture to look at.
+  if (video.elt.readyState >= 2) {
+    try {
+      let face = await faceapi
+        .detectSingleFace(video.elt, new faceapi.TinyFaceDetectorOptions())
+        .withFaceExpressions();
+      //no face found: no smile.
+      smileTarget = face ? face.expressions.happy : 0;
+    } catch (error) {
+      console.warn("smile check didn't work this time:", error);
+    }
+  }
+  setTimeout(checkSmile, 1000 / smileChecksPerSecond);
 }
 
 // how wide the sketch-holder div is, in pixels
@@ -293,6 +334,20 @@ function bluePurple() {
   return lerpColor(blue, purple, random(1)); //random(1) = how far along from blue to purple, 0 to 1.
 }
 
+//*smile* a brighter, more colourful version of a colour. it pushes red, green and blue further apart
+//(more colourful), then lifts them all so the strongest one is 255 (brighter).
+function brighter(c) {
+  let r = red(c);
+  let g = green(c);
+  let b = blue(c);
+  let average = (r + g + b) / 3;
+  r = constrain(average + (r - average) * 2.5, 0, 255);
+  g = constrain(average + (g - average) * 2.5, 0, 255);
+  b = constrain(average + (b - average) * 2.5, 0, 255);
+  let lift = 255 / max(r, g, b, 1);
+  return color(r * lift, g * lift, b * lift);
+}
+
 //fills the whole canvas with balls, one every spacing pixels across and down.
 function makeBalls() {
   myBalls = [];
@@ -304,9 +359,8 @@ function makeBalls() {
   }
 }
 
-//*eat* a circle around your hand, in canvas pixels: its middle, and how far out it reaches.
-//balls inside it never cover, so your hand always shows. null when there's no hand.
-function handZone() {
+//*eat* the middle of your hand, in canvas pixels, so eatBalls() can start from there. null when there's no hand.
+function handMiddle() {
   if (!smoothHand || !video || video.width === 0) {
     return null;
   }
@@ -323,30 +377,29 @@ function handZone() {
   middleX /= points.length;
   middleY /= points.length;
 
-  //the circle reaches the point furthest from the middle, plus a margin.
-  let reach = 0;
-  for (let point of points) {
-    reach = max(reach, dist(point.x, point.y, middleX, middleY));
-  }
   return {
     x: middleX * fit.scale + fit.offsetX,
     y: middleY * fit.scale + fit.offsetY,
-    r: reach * fit.scale + handMargin,
   };
 }
 
-//*eat* marks some of the covering balls as eaten. they shrink away, then removeEatenBalls() takes them out.
-//the ones closest to your hand go first, so you appear from your hand outwards.
+//*eat* the balls sitting on your body that haven't been eaten yet.
+function bodyBalls() {
+  return myBalls.filter((ball) => ball.bodyAmount > 0.5 && !ball.eaten);
+}
+
+//*eat* marks some of the balls on your body as eaten. they shrink away, then removeEatenBalls() takes them out.
+//the ones closest to your hand go first, so they disappear from your hand outwards.
 function eatBalls(howMany) {
-  let covering = myBalls.filter((ball) => ball.covering && !ball.eaten);
-  let zone = handZone();
-  if (zone) {
-    covering.sort((a, b) => dist(a.x, a.y, zone.x, zone.y) - dist(b.x, b.y, zone.x, zone.y));
+  let onBody = bodyBalls();
+  let hand = handMiddle();
+  if (hand) {
+    onBody.sort((a, b) => dist(a.x, a.y, hand.x, hand.y) - dist(b.x, b.y, hand.x, hand.y));
   } else {
-    shuffle(covering, true); //no hand: eat them in a random order.
+    shuffle(onBody, true); //no hand: eat them in a random order.
   }
-  for (let i = 0; i < howMany && i < covering.length; i++) {
-    covering[i].eaten = true;
+  for (let i = 0; i < howMany && i < onBody.length; i++) {
+    onBody[i].eaten = true;
   }
 }
 
@@ -375,6 +428,62 @@ function restoreBalls() {
   eatenSpots = [];
 }
 
+//*flower* is the flower open right now? only on the "level done" screen, and only when you passed.
+function flowerShowing() {
+  return gameOn && gameState === "levelDone" && levelPassed();
+}
+
+//*flower* draws the flower into flowerLayer, cuts the person out of it with the body mask,
+//then puts it on the canvas lined up with the video. so it looks like it's behind you.
+function drawFlower(fit) {
+  //the layer is the camera's size, the same as the mask, so they line up exactly.
+  if (!flowerLayer || flowerLayer.width !== video.width || flowerLayer.height !== video.height) {
+    flowerLayer = createGraphics(video.width, video.height);
+    flowerLayer.pixelDensity(1);
+  }
+
+  if (!paused) {
+    bloom = min(1, bloom + deltaTime / 1000 / bloomSeconds);
+  }
+  let open = 1 - pow(1 - bloom, 3); //fast at first, then slows down as it finishes opening.
+
+  let g = flowerLayer;
+  g.clear();
+  g.push();
+  g.translate(g.width / 2, g.height / 2);
+  g.rotate(frameCount * 0.003); //a slow turn, so it feels alive.
+  g.noStroke();
+  let size = min(g.width, g.height) * 0.5 * (0.3 + 0.7 * open); //starts small and grows as it opens.
+
+  //each petal's angle is spread out by open: at 0 they all point up (a bud), at 1 they go all the way round.
+  //outer ring: big pastel purple petals.
+  g.fill(gamePurple[0], gamePurple[1], gamePurple[2]);
+  for (let i = 0; i < petalCount; i++) {
+    g.push();
+    g.rotate(((i - (petalCount - 1) / 2) / petalCount) * TWO_PI * open);
+    g.ellipse(0, -size * 0.55, size * 0.42, size * 1.1);
+    g.pop();
+  }
+  //inner ring: smaller pink petals, sitting between the outer ones.
+  g.fill(255, 170, 205);
+  for (let i = 0; i < petalCount; i++) {
+    g.push();
+    g.rotate(((i + 0.5 - (petalCount - 1) / 2) / petalCount) * TWO_PI * open);
+    g.ellipse(0, -size * 0.35, size * 0.3, size * 0.7);
+    g.pop();
+  }
+  //the middle.
+  g.fill(255, 220, 120);
+  g.circle(0, 0, size * 0.35);
+  g.pop();
+
+  //the mask is solid on the room and see-through on the person (see isOnBody), so masking keeps the flower
+  //only on the room. the person, drawn underneath in the video, shows through in front of it.
+  let flower = g.get();
+  flower.mask(segmentation.mask);
+  image(flower, fit.offsetX, fit.offsetY, video.width * fit.scale, video.height * fit.scale);
+}
+
 //how much the video is scaled up and where it starts, so it covers the canvas without squishing.
 //whichever side needs to grow more decides how much, and the extra is cut off the edges.
 //the video, the balls and the hand points all use this, so they line up.
@@ -397,7 +506,7 @@ function draw() {
   if (segmentation) {
     fit = videoFit();
     segmentation.mask.loadPixels(); //once per frame, so every ball can read the mask quickly.
-    //*eat* game mode shows the whole camera, so you can see yourself once the covering balls are eaten.
+    //*eat* game mode shows the whole camera, so you can see yourself (and the flower can open behind you).
     //it also paints over the whole canvas every frame, so eaten balls don't leave marks behind.
     if (!gameOn) {
       video.mask(segmentation.mask);
@@ -409,13 +518,20 @@ function draw() {
       video.width * fit.scale,
       video.height * fit.scale,
     );
+
+    //*flower* passed a level: a flower opens behind you, drawn over the room but not over you.
+    if (flowerShowing()) {
+      drawFlower(fit);
+    }
   }
 
-  //*eat* while you're signing, the balls on your body cover it. once the sentence is done (or the level is over), they don't.
-  let coverBody = gameOn && gameState !== "success" && gameState !== "levelDone";
-  let zone = handZone();
+  smile = lerp(smile, smileTarget, 0.1); //*smile*
 
   for (let ball of myBalls) {
+    //*flower* the balls are turned off while the flower is open. they come back with the next level.
+    if (flowerShowing()) {
+      break;
+    }
     if (segmentation) {
       ball.onBody = ball.isOnBody(
         segmentation.mask,
@@ -427,7 +543,7 @@ function draw() {
     if (!paused) {
       ball.move();
     }
-    ball.update(coverBody, zone); //every frame, the ball checks if it's clicked or on the person, and picks its colour and size.
+    ball.update(); //every frame, the ball checks if it's clicked or on the person, and picks its colour.
     ball.show();
   }
   removeEatenBalls(); //*eat*
@@ -886,7 +1002,7 @@ function startSentence(index) {
   waitLeft = readySeconds;
   gameState = "ready";
   loadDemo(); //*api*
-  restoreBalls(); //*eat* a new sentence: the eaten balls come back to cover your body again.
+  restoreBalls(); //*eat* a new sentence: the eaten balls come back.
 }
 
 //*levels* did you sign at least half of this level's sentences in time?
@@ -1056,6 +1172,7 @@ function updateGame() {
         demoBox.hide(); //*api*
         if (levelPassed()) {
           playSound(levelUpSound); //*sound* only when you passed, not when you have to try the level again.
+          bloom = 0; //*flower* starts closed, then opens.
         }
       }
     }
@@ -1082,11 +1199,10 @@ function updateGame() {
   }
 
   if (holdTime >= holdSeconds) {
-    //*eat* that sign is done: eat an equal share of the covering balls for each sign left,
+    //*eat* that sign is done: eat an equal share of the balls on your body for each sign left,
     //so the last sign of the sentence eats all the ones that are left.
     let signsLeft = steps.length - stepIndex;
-    let covering = myBalls.filter((ball) => ball.covering && !ball.eaten).length;
-    eatBalls(ceil(covering / signsLeft));
+    eatBalls(ceil(bodyBalls().length / signsLeft));
     playSound(correctSound); //*sound*
 
     stepIndex += 1; //that sign is done, on to the next one.
@@ -1291,9 +1407,17 @@ class Ball {
     //the ball only turns red once it's past halfway, so balls on the edge of your outline don't flicker.
     this.bodyAmount = 0;
 
-    //*eat* covering and eating.
-    this.covering = false; //true while it should grow to hide the body. update() sets it every frame.
-    this.cover = 0; //0 = its normal small size, 1 = grown to coverRadius. eases between them so it doesn't pop.
+    //*smile* the brighter colours it turns into when you smile. worked out once here, not every frame.
+    this.brightOriginal = brighter(this.originalColor);
+    this.brightHighlight = brighter(this.highlightColor);
+    this.brightColor = this.brightOriginal; //the bright version of whichever colour it has right now.
+
+    //*smile* each ball is a little flower bud that opens when you smile.
+    this.bloom = 0; //0 = a closed bud (it looks like a ball), 1 = wide open.
+    this.bloomSpeed = random(0.04, 0.15); //each one opens at its own speed, so they ripple open instead of all at once.
+    this.turn = random(TWO_PI); //each one is turned a different way, so they don't all look the same.
+
+    //*eat* eating.
     this.eaten = false; //eatBalls() sets this. the ball shrinks away, then gets removed from the array.
     this.grow = 1; //how much of its size it has: 1 = all, 0 = none. shrinks when eaten, grows in when it comes back.
 
@@ -1304,11 +1428,11 @@ class Ball {
 
   //the radius right now. sin() goes smoothly from -1 to 1 and back,
   //so this goes from pulseAmount smaller to pulseAmount bigger and back.
-  //*eat* covering moves it from its pulsing size towards coverRadius, and grow shrinks it towards nothing.
+  //*eat* grow shrinks it towards nothing when it's eaten.
   size() {
     let pulsing =
       this.r + sin(pulseTime * this.pulseSpeed + this.pulseStart) * pulseAmount;
-    return lerp(pulsing, coverRadius, this.cover) * this.grow;
+    return pulsing * this.grow;
   }
 
   //*eat* true once an eaten ball has shrunk to almost nothing, so it can be taken out of the array.
@@ -1358,15 +1482,10 @@ class Ball {
   }
 
   //runs every frame: red if it's been clicked OR the person is over it, its own colour if not.
-  //*eat* coverBody: should balls on the body cover it right now? zone: the circle around the hand (or null).
-  update(coverBody, zone) {
+  update() {
     this.bodyAmount = lerp(this.bodyAmount, this.onBody ? 1 : 0, 0.3); //*change*
-
-    //*eat* cover the body, but never the hand.
-    let nearHand = zone && dist(this.homeX, this.homeY, zone.x, zone.y) < zone.r;
-    this.covering = coverBody && this.bodyAmount > 0.5 && !nearHand;
-    this.cover = lerp(this.cover, this.covering ? 1 : 0, 0.2);
-    this.grow = lerp(this.grow, this.eaten ? 0 : 1, 0.15);
+    this.grow = lerp(this.grow, this.eaten ? 0 : 1, 0.15); //*eat*
+    this.bloom = lerp(this.bloom, smile, this.bloomSpeed); //*smile* opens as you smile, closes when you stop.
 
     if (this.clicked || this.bodyAmount > 0.5) {
       this.highlight();
@@ -1377,15 +1496,38 @@ class Ball {
 
   highlight() {
     this.color = this.highlightColor;
+    this.brightColor = this.brightHighlight; //*smile*
   }
 
   dehighlight() {
     this.color = this.originalColor;
+    this.brightColor = this.brightOriginal; //*smile*
   }
 
+  //*smile* a closed bud is just a ball. as it blooms, its petals spread out from the middle,
+  //get brighter, and a yellow centre shows.
   show() {
-    fill(this.color);
+    let r = this.size();
     noStroke();
-    circle(this.x, this.y, this.size() * 2);
+
+    //closed: one circle. (this also saves time, since drawing petals for thousands of balls is slow.)
+    if (this.bloom < 0.02) {
+      fill(this.color);
+      circle(this.x, this.y, r * 2);
+      return;
+    }
+
+    //the petals: 5 circles that start on top of each other (a ball) and move outwards as it opens.
+    fill(lerpColor(this.color, this.brightColor, this.bloom));
+    let spread = r * 1.2 * this.bloom; //how far each petal has moved out from the middle.
+    let petalSize = r * (1.2 + 0.8 * this.bloom); //the petals grow a little as they open.
+    for (let i = 0; i < flowerPetals; i++) {
+      let angle = this.turn + (TWO_PI * i) / flowerPetals;
+      circle(this.x + cos(angle) * spread, this.y + sin(angle) * spread, petalSize);
+    }
+
+    //the yellow middle, growing in as it opens.
+    fill(255, 220, 120);
+    circle(this.x, this.y, r * 1.2 * this.bloom);
   }
 }
