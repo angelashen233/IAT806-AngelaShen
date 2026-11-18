@@ -17,6 +17,9 @@
 //   colourful the bigger the smile. stop smiling and they close back into balls.
 // - *sound* sound effects: a whoosh when a hand shows up, a chime for each correct sign, and a level up sound when you pass a level.
 // - *flower* when you pass a level, a flower opens behind you and the balls turn off until the next level.
+// - *ui* practice and game mode share one look: narrow see-through pastel cards with wobbly corners, and pastel
+//   hand-shaped buttons. the Help button hides the practice instructions so they don't cover you.
+//   with help on, the sign it recognises floats above your hand, and the demo box plays its real ASL sign.
 //
 // REFERENCES
 // body segmentation: ml5.js example "bodySegmentation-mask-person", https://editor.p5js.org/ml5/sketches/h6TN8umP5
@@ -28,6 +31,7 @@
 // its tiny face detector and face expression models, https://justadudewhohacks.github.io/face-api.js/docs/index.html
 // (code: https://github.com/justadudewhohacks/face-api.js). loaded through @vladmandic/face-api 1.7.15 by Vladimir Mandic,
 // an updated version of face-api.js that works alongside ml5, https://github.com/vladmandic/face-api
+// *ui* the hand-shaped buttons: the "hand" icon by loading.io (CC-BY), recoloured, https://loading.io/icon/ckjo44
 
 //settings: change these to see what happens.
 let spacing = 20; //how many pixels apart the balls' spots are. smaller = more balls (but slower: 16 dropped to ~10 fps).
@@ -51,6 +55,13 @@ let eatenSpots = []; //*eat* the grid spots of the balls that got eaten, so new 
 //the pause button: stops the pulsing and the wobbling, press again to start them.
 let paused = false;
 let pauseButton;
+
+//*ui* the panels: soft see-through cards under the hand buttons, in the game's pastel colours.
+let helpButton;
+let showHelp = true; //the help button flips this. false hides the practice instructions.
+let panelTop = 122; //how far down the panels start, so they sit just under the hand buttons.
+let panelWidth = 380; //the panels are narrow, so they stay at the side and cover less of you.
+let panelAlpha = 215; //how solid the panels are, 0 to 255. lower = more of you shows through.
 let pulseTime = 0; //the pulse clock. it only counts up while not paused, so the balls freeze mid-pulse.
 
 //body segmentation
@@ -237,6 +248,7 @@ let demoBox; //the box on the page that holds the stick figure and its caption.
 let demoViewer; //the <pose-viewer> element that plays the animation.
 let demoCaption;
 let demoFiles = {}; //the API addresses that have already worked, so each sentence is only checked once.
+let demoWords = ""; //*ui* the words the demo box is showing (or loading) right now.
 
 function setup() {
   const canvas = createCanvas(sketch_holder_width(), windowHeight); //full width of the page, full height of the window.
@@ -247,16 +259,26 @@ function setup() {
 
   //the button sits on top of the canvas's top-left corner, so it's on screen even though the canvas fills the window.
   select("#sketch-holder").style("position", "relative"); //makes position() below measure from the holder's corner.
+  //*ui* the buttons are pastel hands (the "hand-button" style is in index.html), in a row along the top.
   pauseButton = createButton("Pause");
   pauseButton.parent("sketch-holder");
-  pauseButton.position(16, 16);
+  pauseButton.class("hand-button");
+  pauseButton.position(16, 10);
   pauseButton.mousePressed(togglePause);
 
   //*game* the game mode button, next to the pause button.
-  gameButton = createButton("Game mode: off");
+  gameButton = createButton("Game: off");
   gameButton.parent("sketch-holder");
-  gameButton.position(100, 16);
+  gameButton.class("hand-button blue");
+  gameButton.position(108, 10);
   gameButton.mousePressed(toggleGame);
+
+  //*ui* the help button hides the practice instructions, so they don't cover you.
+  helpButton = createButton("Help: on");
+  helpButton.parent("sketch-holder");
+  helpButton.class("hand-button pink");
+  helpButton.position(200, 10);
+  helpButton.mousePressed(toggleHelp);
   makeDemoBox(); //*api*
 
   makeBalls();
@@ -334,18 +356,22 @@ function bluePurple() {
   return lerpColor(blue, purple, random(1)); //random(1) = how far along from blue to purple, 0 to 1.
 }
 
-//*smile* a brighter, more colourful version of a colour. it pushes red, green and blue further apart
-//(more colourful), then lifts them all so the strongest one is 255 (brighter).
+//*smile* a p5 colour as 3 plain numbers, [red, green, blue]. the flowers mix these with lerp(),
+//which is much faster than lerpColor() when thousands of flowers do it every frame.
+function toRGB(c) {
+  return [red(c), green(c), blue(c)];
+}
+
+//*smile* a brighter, more colourful version of a colour (as [red, green, blue]). it pushes red, green and blue
+//further apart (more colourful), then lifts them all so the strongest one is 255 (brighter).
 function brighter(c) {
-  let r = red(c);
-  let g = green(c);
-  let b = blue(c);
+  let [r, g, b] = toRGB(c);
   let average = (r + g + b) / 3;
   r = constrain(average + (r - average) * 2.5, 0, 255);
   g = constrain(average + (g - average) * 2.5, 0, 255);
   b = constrain(average + (b - average) * 2.5, 0, 255);
   let lift = 255 / max(r, g, b, 1);
-  return color(r * lift, g * lift, b * lift);
+  return [r * lift, g * lift, b * lift];
 }
 
 //fills the whole canvas with balls, one every spacing pixels across and down.
@@ -497,6 +523,8 @@ function videoFit() {
 //order: the masked video first, then the balls on top of it, then the hand and the sign text on top of everything.
 function draw() {
   //background(0);
+  //*ui* wipes last frame, so the see-through panels don't pile up into solid black where nothing else draws.
+  clear();
 
   if (!paused) {
     pulseTime += 1;
@@ -506,11 +534,9 @@ function draw() {
   if (segmentation) {
     fit = videoFit();
     segmentation.mask.loadPixels(); //once per frame, so every ball can read the mask quickly.
-    //*eat* game mode shows the whole camera, so you can see yourself (and the flower can open behind you).
-    //it also paints over the whole canvas every frame, so eaten balls don't leave marks behind.
-    if (!gameOn) {
-      video.mask(segmentation.mask);
-    }
+    //*eat* shows the whole camera, so you can see yourself (and the flower can open behind you).
+    //*ui* practice mode used to mask you out of the video, which left a white shape where you were. now both
+    //modes show you. the mask is still used to find the balls on your body and to put the flower behind you.
     image(
       video,
       fit.offsetX,
@@ -561,6 +587,8 @@ function draw() {
   guessSign();
   drawHand();
   drawSignPanel();
+  drawHandLabel(); //*ui*
+  updatePracticeDemo(); //*ui*
 }
 
 //*sound* plays a sound, but only once it has loaded (before that, the variable is still undefined).
@@ -573,6 +601,18 @@ function playSound(sound) {
 // callback function for body segmentation: ml5 calls this with each new mask.
 function gotResults(result) {
   segmentation = result;
+}
+
+//*ui* shows or hides the practice instructions.
+function toggleHelp() {
+  showHelp = !showHelp;
+  helpButton.html(showHelp ? "Help: on" : "Help: off");
+}
+
+//*ui* a panel with uneven corners that slowly wobble, like the balls pulse. call fill() first.
+function softPanel(x, y, w, h) {
+  let t = pulseTime * 0.03;
+  rect(x, y, w, h, 18 + sin(t) * 5, 10 + sin(t + 1.7) * 4, 22 + sin(t + 3.1) * 5, 9 + sin(t + 4.4) * 4);
 }
 
 //pause: everything freezes where it is. play: it carries on from there.
@@ -590,7 +630,7 @@ function mousePressed(event) {
   userStartAudio(); //*sound* browsers block sound until the user clicks; this switches it on.
 
   //clicks on the pause button come here too. this skips them, so the ball under the button doesn't turn red.
-  if (event && (event.target === pauseButton.elt || event.target === gameButton.elt)) {
+  if (event && (event.target === pauseButton.elt || event.target === gameButton.elt || event.target === helpButton.elt)) {
     return;
   }
 
@@ -833,12 +873,9 @@ function drawSignPanel() {
   if (!handPose) {
     lines.push("loading hand tracking...");
   } else if (modelState === "collecting") {
-    lines.push(
-      "SIGN PRACTICE: make a hand shape and HOLD its key (a letter, or 1-4 below)",
-    );
-    lines.push(
-      "to save examples (50+ each, 2+ signs). then press Enter to train.",
-    );
+    //*ui* shorter lines, so they fit the narrower panel.
+    lines.push("make a hand shape and HOLD its key (a letter, or 1-4)");
+    lines.push("save 50+ of each, for 2+ signs. then press Enter to train.");
     //*change* compliments show their emoji instead of their number.
     let counts = Object.entries(sampleCounts).map((entry) => {
       let compliment = findCompliment(entry[0]);
@@ -846,11 +883,7 @@ function drawSignPanel() {
       return name + ": " + entry[1];
     });
     lines.push(counts.length > 0 ? counts.join("   ") : "no examples yet");
-    lines.push(
-      smoothHand
-        ? "hand found"
-        : "no hand found: hold your hand up to the camera",
-    );
+    lines.push(smoothHand ? "hand found" : "no hand found: hold your hand up");
   } else if (modelState === "training") {
     lines.push("training... round " + trainingRound + " of " + trainingRounds);
   } else {
@@ -858,7 +891,7 @@ function drawSignPanel() {
     //*fix* always show what it's seeing right now, even when it's not sure enough to show a compliment,
     //so you can tell whether it's working but unsure, or not seeing your hand at all.
     if (!smoothHand) {
-      lines.push("no hand found: hold your hand up to the camera");
+      lines.push("no hand found: hold your hand up");
     } else if (prediction) {
       let compliment = findCompliment(prediction.label);
       let name = compliment ? compliment.emoji + " " + compliment.name : prediction.label;
@@ -869,89 +902,101 @@ function drawSignPanel() {
     lines.push(warning); //*fix*
   }
 
-  let boxHeight = 20 + lines.length * 20; //*change* worked out first, so the compliment guide can go right under it.
+  //*ui* the same soft pastel card as the game panel, and narrower, so it covers less of you.
+  let w = min(panelWidth, width - 32);
   push();
   noStroke();
-  fill(0, 180);
-  rect(16, 52, 660, boxHeight, 8); //*change* was 560 wide, now fits the guide's longest line
-  fill(255);
-  textSize(14);
   textAlign(LEFT, TOP);
-  for (let i = 0; i < lines.length; i++) {
-    text(lines[i], 28, 62 + i * 20);
+
+  if (showHelp) {
+    //worked out first, so the compliment guide can go right under it. a warning is long, so it gets room for 2 lines.
+    let boxHeight = 44 + lines.length * 19 + (warning ? 19 : 0);
+    fill(...gamePaper, panelAlpha);
+    softPanel(16, panelTop, w, boxHeight);
+    fill(...gameInk);
+    textSize(14);
+    textStyle(BOLD);
+    text("SIGN PRACTICE", 30, panelTop + 12);
+    textStyle(NORMAL);
+    textSize(12);
+    for (let i = 0; i < lines.length; i++) {
+      text(lines[i], 30, panelTop + 34 + i * 19, w - 28);
+    }
+    drawComplimentGuide(panelTop + boxHeight + 10); //*change*
   }
 
-  //the guess, big in the top-right corner.
+  //the guess, in the top-right corner.
   //*change* uses the steadier guess. a compliment shows its emoji and full sentence; a letter shows the letter.
+  //*ui* a smaller card than before, with the sentence wrapped onto two lines, so it doesn't stretch across you.
   let compliment = currentCompliment();
-  //*change* a solid box behind the guess, so a new guess is never drawn on top of an old one
-  //(with background(0) turned off, nothing else clears this corner between frames).
+  let guessWidth = compliment ? 300 : 130;
+  let guessLeft = width - guessWidth - 16;
   if (compliment || (modelState === "ready" && shownGuess)) {
-    let boxWidth = compliment ? 40 + max(80, compliment.sentence.length * 16) : 140;
-    fill(0);
-    rect(width - boxWidth - 8, 8, boxWidth, 168, 8);
-    fill(255);
+    fill(...gamePaper, panelAlpha);
+    softPanel(guessLeft, 16, guessWidth, compliment ? 170 : 140);
+    fill(...gameInk);
   }
   if (compliment) {
-    textAlign(RIGHT, TOP);
-    textSize(72);
-    text(compliment.emoji, width - 24, 16);
-    textSize(30);
-    textStyle(BOLD);
-    text(compliment.sentence, width - 24, 104);
-    textStyle(NORMAL);
-    textSize(16);
-    text(round(shownGuess.confidence * 100) + "% sure", width - 24, 146);
-  } else if (modelState === "ready" && shownGuess && !findCompliment(shownGuess.label)) {
-    textAlign(RIGHT, TOP);
-    textSize(96);
-    text(shownGuess.label, width - 24, 16);
+    textAlign(CENTER, TOP);
+    textSize(52);
+    text(compliment.emoji, guessLeft + guessWidth / 2, 24);
     textSize(18);
-    text(round(shownGuess.confidence * 100) + "% sure", width - 24, 122);
+    textStyle(BOLD);
+    text(compliment.sentence, guessLeft + 16, 92, guessWidth - 32);
+    textStyle(NORMAL);
+    textSize(12);
+    text(round(shownGuess.confidence * 100) + "% sure", guessLeft + guessWidth / 2, 146);
+  } else if (modelState === "ready" && shownGuess && !findCompliment(shownGuess.label)) {
+    textAlign(CENTER, TOP);
+    textSize(72);
+    text(shownGuess.label, guessLeft + guessWidth / 2, 22);
+    textSize(13);
+    text(round(shownGuess.confidence * 100) + "% sure", guessLeft + guessWidth / 2, 112);
   }
   pop();
-
-  drawComplimentGuide(52 + boxHeight + 12); //*change*
 }
 
 //*change* the compliment guide: one row per gesture, with its emoji, key, how to make it, and its sentence.
 //it sits under the instructions box. the row it's seeing right now lights up pink.
+//*ui* same soft pastel card as the game panel. each row: the emoji, the key and name, and how to make it
+//(wrapped onto two lines). the sentence isn't listed here: it shows up big in the corner when it sees the gesture.
 function drawComplimentGuide(top) {
-  let rowHeight = 48;
-  let boxWidth = 660;
-  let boxHeight = 36 + compliments.length * rowHeight;
+  let rowHeight = 50;
+  let boxWidth = min(panelWidth, width - 32);
+  let boxHeight = 38 + compliments.length * rowHeight;
   let showing = currentCompliment();
 
   push();
   noStroke();
-  fill(0, 180);
-  rect(16, top, boxWidth, boxHeight, 8);
+  fill(...gamePaper, panelAlpha);
+  softPanel(16, top, boxWidth, boxHeight);
 
-  fill(255);
+  fill(...gameInk);
   textAlign(LEFT, TOP);
   textSize(14);
   textStyle(BOLD);
-  text("COMPLIMENTS: make the gesture and hold its number key to teach it", 28, top + 10);
+  text("COMPLIMENTS: hold a number key to teach", 30, top + 12);
   textStyle(NORMAL);
 
   for (let i = 0; i < compliments.length; i++) {
     let compliment = compliments[i];
-    let rowTop = top + 32 + i * rowHeight;
+    let rowTop = top + 36 + i * rowHeight;
 
+    //the row it's seeing right now lights up light blue, like the sign you're on in the game.
     if (showing === compliment) {
-      fill(255, 120, 180, 120);
-      rect(22, rowTop - 2, boxWidth - 12, rowHeight - 4, 6);
+      fill(214, 232, 255);
+      rect(22, rowTop - 3, boxWidth - 12, rowHeight - 4, 8);
     }
 
-    fill(255);
-    textSize(28);
+    fill(...gameInk);
+    textSize(24);
     text(compliment.emoji, 30, rowTop + 4);
-    textSize(13);
-    text("[" + compliment.key + "]  " + compliment.name + ": " + compliment.how, 74, rowTop + 2);
-    textSize(14);
+    textSize(12);
     textStyle(BOLD);
-    text('"' + compliment.sentence + '"', 74, rowTop + 22);
+    text("[" + compliment.key + "]  " + compliment.name, 70, rowTop);
     textStyle(NORMAL);
+    textSize(11);
+    text(compliment.how, 70, rowTop + 16, boxWidth - 70);
   }
   pop();
 }
@@ -971,14 +1016,18 @@ function drawComplimentGuide(top) {
 function toggleGame() {
   userStartAudio(); //*sound* browsers block sound until the user clicks; this switches it on.
   gameOn = !gameOn;
-  gameButton.html(gameOn ? "Game mode: on" : "Game mode: off");
-  clear(); //wipes the old panels off the canvas, since nothing else clears it.
+  gameButton.html(gameOn ? "Game: on" : "Game: off");
+  helpButton.style("display", gameOn ? "none" : ""); //*ui* the game always shows its panel, so help only matters in practice.
   if (gameOn) {
     startGame();
   } else {
     demoBox.hide(); //*api*
     restoreBalls(); //*eat*
+    //*ui* forget the game's sign, so practice mode starts its demo box fresh.
+    demoWords = "";
+    demoViewer.removeAttribute("src");
   }
+  placeDemoBox(); //*ui* the box sits in a different spot in each mode.
 }
 
 function startGame() {
@@ -1035,8 +1084,8 @@ function makeDemoBox() {
   demoBox.style("position", "absolute");
   demoBox.style("width", "240px");
   demoBox.style("padding", "10px");
-  demoBox.style("border-radius", "12px");
-  demoBox.style("background", "rgb(240, 235, 255)");
+  demoBox.style("border-radius", "22px 12px 26px 10px"); //*ui* uneven corners, like the panels.
+  demoBox.style("background", "rgba(240, 235, 255, 0.85)");
   demoBox.style("color", "rgb(70, 55, 120)");
   demoBox.style("font-size", "12px");
 
@@ -1055,11 +1104,14 @@ function makeDemoBox() {
 }
 
 //top-right corner if the window is wide enough, otherwise under the game panel.
+//*ui* in practice mode, it goes in the top-right corner under the guess card.
 function placeDemoBox() {
-  if (width >= 960) {
+  if (!gameOn) {
+    demoBox.position(max(16, width - 276), 200);
+  } else if (width >= 960) {
     demoBox.position(width - 276, 16);
   } else {
-    demoBox.position(16, 52 + gamePanelHeight() + 12);
+    demoBox.position(16, panelTop + gamePanelHeight() + 12);
   }
 }
 
@@ -1073,30 +1125,84 @@ async function loadDemo() {
   demoBox.show();
 
   let current = level.sentences[sentenceIndex];
-  let words = current.demo || current.sentence; //what to ask the API for.
+  showSign(current.demo || current.sentence); //*ui* the loading part is in showSign(), so practice mode can use it too.
+}
+
+//*ui* asks the API for the real ASL sign for some words (or one letter), and plays it in the demo box.
+//game mode uses it for each sentence; practice mode uses it for whatever sign it recognises.
+async function showSign(words) {
+  demoWords = words;
   demoCaption.html("loading the real sign...");
 
   try {
     if (!demoFiles[words]) {
       //spoken=en means the text is English, signed=ase means American Sign Language.
       let address = signApi + "?text=" + encodeURIComponent(words) + "&spoken=en&signed=ase";
-      //ask once first, to find out if the API is reachable. if it isn't, this jumps to the catch below.
-      let response = await fetch(address);
+      //*ui* the API refuses requests that say which website they came from (it answers 403 for github.io and
+      //for local test servers), so this asks without saying ("no-referrer"). if it fails, this jumps to the catch below.
+      let response = await fetch(address, { referrerPolicy: "no-referrer" });
       if (!response.ok) {
         throw new Error("sign API answered " + response.status);
       }
-      demoFiles[words] = address; //remember that this one works, so it's only checked once.
+      //*ui* the viewer would download it again (and say where from), so it gets the file we already have instead.
+      let file = await response.blob();
+      demoFiles[words] = URL.createObjectURL(file); //remember it, so each sign is only downloaded once.
     }
-    //if the game has moved on to another sentence while this was downloading, don't show the old one.
-    if (current !== levels[levelIndex].sentences[sentenceIndex]) {
+    //if something else was asked for while this was downloading (a new sentence, or a new sign), don't show the old one.
+    if (demoWords !== words) {
       return;
     }
     demoViewer.setAttribute("src", demoFiles[words]);
     demoCaption.html('The real ASL sign for "' + words + '", machine-translated by sign.mt. Watch how it moves, then copy the hand shape.');
   } catch (error) {
     console.log("sign demo error:", error);
-    demoCaption.html("Couldn't load the real sign (is the internet on?). The game still works without it.");
+    demoCaption.html("Couldn't load the real sign (is the internet on?). Everything else still works without it.");
   }
+}
+
+//*ui* practice mode with help on: shows the demo box, with the real sign for what it recognises right now.
+//it only asks the API again when the recognised sign changes, not every frame.
+function updatePracticeDemo() {
+  if (!showHelp) {
+    demoBox.hide();
+    return;
+  }
+  demoBox.show();
+  if (modelState === "ready" && shownGuess) {
+    let compliment = findCompliment(shownGuess.label);
+    let words = compliment ? compliment.sentence : shownGuess.label; //a compliment's sentence, or the letter.
+    if (words !== demoWords) {
+      showSign(words);
+    }
+  } else if (demoWords === "") {
+    demoCaption.html("Teach it some signs, then make one: its real ASL sign will show up here.");
+  }
+}
+
+//*ui* the sign it recognises, in a bubble just above your hand, so it follows your hand around.
+function drawHandLabel() {
+  if (!showHelp || modelState !== "ready" || !shownGuess || !smoothHand || !video || video.width === 0) {
+    return;
+  }
+  let fit = videoFit();
+  let middle = handMiddle();
+  //the top of the hand is its highest point (the smallest y).
+  let handTop = min(smoothHand.keypoints.map((point) => point.y)) * fit.scale + fit.offsetY;
+  let compliment = findCompliment(shownGuess.label);
+  let label = compliment ? compliment.emoji : shownGuess.label;
+  let x = middle.x;
+  let y = max(36, handTop - 40); //above the hand, but never off the top of the canvas.
+
+  push();
+  noStroke();
+  fill(...gamePaper, panelAlpha);
+  circle(x, y, 58);
+  fill(...gameInk);
+  textAlign(CENTER, CENTER);
+  textStyle(BOLD);
+  textSize(compliment ? 30 : 32);
+  text(label, x, y + 2);
+  pop();
 }
 
 //which fingers are up? gives 5 true / false values: thumb, index, middle, ring, pinky.
@@ -1236,22 +1342,28 @@ function gamePanelHeight() {
       mostSteps = max(mostSteps, sentence.steps.length);
     }
   }
-  return max(160 + mostSteps * 48, 170 + mostSentences * 20);
+  return max(176 + mostSteps * 52, 190 + mostSentences * 20);
+}
+
+//*ui* the game panel's width: the same narrow width as the practice panels, but never wider than the window.
+function gamePanelWidth() {
+  return min(panelWidth, width - 32);
 }
 
 //the game panel, in the top-left corner under the buttons.
+//*ui* narrower and see-through now, with the same soft wobbly corners as the practice panels.
 function drawGamePanel() {
   let left = 16;
-  let top = 52;
-  let panelWidth = min(660, width - 32);
+  let top = panelTop;
+  let panelWidth = gamePanelWidth();
   let panelHeight = gamePanelHeight();
   let level = levels[levelIndex];
 
   push();
   noStroke();
   textAlign(LEFT, TOP);
-  fill(...gamePaper);
-  rect(left, top, panelWidth, panelHeight, 12);
+  fill(...gamePaper, panelAlpha);
+  softPanel(left, top, panelWidth, panelHeight);
 
   if (gameState === "levelDone") {
     drawLevelDone(left, top, panelWidth, panelHeight);
@@ -1261,13 +1373,12 @@ function drawGamePanel() {
 
   let current = level.sentences[sentenceIndex];
 
-  //top row: which level and sentence, and the score.
+  //top row: which level and sentence, and the score. *ui* the level's name is left out, so it fits the narrower panel.
   fill(...gameInk);
-  textSize(14);
+  textSize(13);
   textStyle(BOLD);
   text(
-    "LEVEL " + (levelIndex + 1) + " of " + levels.length + "  ·  " + level.name +
-      "  ·  " + (sentenceIndex + 1) + " of " + level.sentences.length,
+    "LEVEL " + (levelIndex + 1) + " of " + levels.length + "  ·  " + (sentenceIndex + 1) + " of " + level.sentences.length,
     left + 14,
     top + 12,
   );
@@ -1278,8 +1389,14 @@ function drawGamePanel() {
   textSize(22);
   text(ceil(timeLeft) + " s", left + panelWidth - 14, top + 42);
   textAlign(LEFT, TOP);
-  textSize(current.sentence.length > 28 ? 24 : 30); //long sentences get smaller writing, so they fit.
-  text(current.sentence, left + 14, top + 36);
+  //*ui* starts at 30 and shrinks until the sentence fits beside the seconds.
+  let sentenceSize = 30;
+  textSize(sentenceSize);
+  while (textWidth(current.sentence) > panelWidth - 90 && sentenceSize > 14) {
+    sentenceSize -= 1;
+    textSize(sentenceSize);
+  }
+  text(current.sentence, left + 14, top + 38);
   textStyle(NORMAL);
 
   //the timer bar: shrinks as time runs out, and goes from blue to purple.
@@ -1293,7 +1410,7 @@ function drawGamePanel() {
   //one row for each sign in the sentence.
   //*levels* level 3 hides how to make each sign. the hints come back when time runs out, so you can learn them.
   let showHow = level.showHow || gameState === "timeup";
-  let rowHeight = 48;
+  let rowHeight = 52; //*ui* taller rows, so the "how" text has room to wrap onto 2 lines.
   for (let i = 0; i < current.steps.length; i++) {
     let step = current.steps[i];
     let rowTop = top + 102 + i * rowHeight;
@@ -1321,8 +1438,8 @@ function drawGamePanel() {
     textStyle(BOLD);
     text(step.sign, left + 60, rowTop);
     textStyle(NORMAL);
-    textSize(13);
-    text(showHow ? step.how : "from memory: which hand shape was it?", left + 60, rowTop + 18);
+    textSize(11);
+    text(showHow ? step.how : "from memory: which hand shape was it?", left + 60, rowTop + 17, panelWidth - 74);
   }
 
   //the message line: what's happening right now.
@@ -1342,17 +1459,19 @@ function drawGamePanel() {
   } else {
     message = "no hand found: hold your hand up to the camera";
   }
-  let messageTop = top + panelHeight - 50;
+  //*ui* the message and the note wrap onto 2 lines each, to fit the narrower panel.
+  let messageTop = top + panelHeight - 70;
   fill(...gameInk);
-  textSize(14);
+  textSize(13);
   textStyle(BOLD);
-  text(message, left + 14, messageTop);
+  text(message, left + 14, messageTop, panelWidth - 28);
   textStyle(NORMAL);
-  textSize(12);
+  textSize(11);
   text(
     "Simplified one-hand shapes. Real ASL also uses movement, both hands and your face.",
     left + 14,
-    messageTop + 24,
+    messageTop + 36,
+    panelWidth - 28,
   );
   pop();
 }
@@ -1366,7 +1485,7 @@ function drawLevelDone(left, top, panelWidth, panelHeight) {
   fill(...gameInk);
   textSize(14);
   textStyle(BOLD);
-  text("LEVEL " + (levelIndex + 1) + " of " + levels.length + "  ·  " + level.name + "  ·  done!", left + 14, top + 12);
+  text("LEVEL " + (levelIndex + 1) + " of " + levels.length + "  ·  done!", left + 14, top + 12); //*ui* no level name, so it fits
   textSize(30);
   text("Score: " + score, left + 14, top + 36);
   textStyle(NORMAL);
@@ -1387,7 +1506,7 @@ function drawLevelDone(left, top, panelWidth, panelHeight) {
     next = "Level passed! Press Enter for level " + (levelIndex + 2) + ".";
   }
   textStyle(BOLD);
-  text(next, left + 14, top + panelHeight - 30);
+  text(next, left + 14, top + panelHeight - 48, panelWidth - 28); //*ui* wraps onto 2 lines in the narrower panel.
   textStyle(NORMAL);
 }
 
@@ -1407,10 +1526,14 @@ class Ball {
     //the ball only turns red once it's past halfway, so balls on the edge of your outline don't flicker.
     this.bodyAmount = 0;
 
-    //*smile* the brighter colours it turns into when you smile. worked out once here, not every frame.
+    //*smile* its colours as plain numbers, and the brighter colours it turns into when you smile.
+    //worked out once here, not every frame.
+    this.originalRGB = toRGB(this.originalColor);
+    this.highlightRGB = toRGB(this.highlightColor);
     this.brightOriginal = brighter(this.originalColor);
     this.brightHighlight = brighter(this.highlightColor);
-    this.brightColor = this.brightOriginal; //the bright version of whichever colour it has right now.
+    this.rgb = this.originalRGB; //whichever colour it has right now...
+    this.brightRGB = this.brightOriginal; //...and the bright version of it.
 
     //*smile* each ball is a little flower bud that opens when you smile.
     this.bloom = 0; //0 = a closed bud (it looks like a ball), 1 = wide open.
@@ -1496,12 +1619,14 @@ class Ball {
 
   highlight() {
     this.color = this.highlightColor;
-    this.brightColor = this.brightHighlight; //*smile*
+    this.rgb = this.highlightRGB; //*smile*
+    this.brightRGB = this.brightHighlight;
   }
 
   dehighlight() {
     this.color = this.originalColor;
-    this.brightColor = this.brightOriginal; //*smile*
+    this.rgb = this.originalRGB; //*smile*
+    this.brightRGB = this.brightOriginal;
   }
 
   //*smile* a closed bud is just a ball. as it blooms, its petals spread out from the middle,
@@ -1517,17 +1642,34 @@ class Ball {
       return;
     }
 
+    //open: thousands of flowers with 6 shapes each is too slow with p5's fill() and circle() (it dropped to a few
+    //frames a second), so this uses the canvas's own drawing commands (drawingContext) instead.
+    let ctx = drawingContext;
+
     //the petals: 5 circles that start on top of each other (a ball) and move outwards as it opens.
-    fill(lerpColor(this.color, this.brightColor, this.bloom));
-    let spread = r * 1.2 * this.bloom; //how far each petal has moved out from the middle.
-    let petalSize = r * (1.2 + 0.8 * this.bloom); //the petals grow a little as they open.
+    //they're all added to one path and filled together, which is much faster than filling each one.
+    let petalRed = lerp(this.rgb[0], this.brightRGB[0], this.bloom);
+    let petalGreen = lerp(this.rgb[1], this.brightRGB[1], this.bloom);
+    let petalBlue = lerp(this.rgb[2], this.brightRGB[2], this.bloom);
+    //flowers on you are see-through, so they don't cover your face and body.
+    let petalAlpha = this.bodyAmount > 0.5 ? 0.45 : 1;
+    ctx.fillStyle = "rgba(" + petalRed + "," + petalGreen + "," + petalBlue + "," + petalAlpha + ")";
+    let spread = r * 0.9 * this.bloom; //how far each petal has moved out from the middle.
+    let petalRadius = r * (0.55 + 0.3 * this.bloom); //the petals grow a little as they open.
+    ctx.beginPath();
     for (let i = 0; i < flowerPetals; i++) {
       let angle = this.turn + (TWO_PI * i) / flowerPetals;
-      circle(this.x + cos(angle) * spread, this.y + sin(angle) * spread, petalSize);
+      let petalX = this.x + cos(angle) * spread;
+      let petalY = this.y + sin(angle) * spread;
+      ctx.moveTo(petalX + petalRadius, petalY); //start each circle on its own edge, so no lines join them.
+      ctx.arc(petalX, petalY, petalRadius, 0, TWO_PI);
     }
+    ctx.fill();
 
     //the yellow middle, growing in as it opens.
-    fill(255, 220, 120);
-    circle(this.x, this.y, r * 1.2 * this.bloom);
+    ctx.fillStyle = "rgb(255,220,120)";
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, r * 0.5 * this.bloom, 0, TWO_PI);
+    ctx.fill();
   }
 }
