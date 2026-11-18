@@ -11,6 +11,9 @@
 // - *game* even smaller balls, in pastel light blue and light purple.
 // - *levels* the game has 3 levels: 1 single signs, 2 short sentences, 3 longer sentences from memory.
 // - *api* in levels 1 and 2, a box shows the real ASL sign as a moving stick figure. it comes from sign.mt's free API.
+// - *eat* in game mode, the balls on your body grow to cover it (but not your hand), so you focus on the hand shape.
+//   each sign you finish eats some of them (splice), so you see more of yourself. they come back (push) for the next sentence.
+// - *sound* sound effects: a whoosh when a hand shows up, a chime for each correct sign, and a level up sound when you pass a level.
 //
 // REFERENCES
 // body segmentation: ml5.js example "bodySegmentation-mask-person", https://editor.p5js.org/ml5/sketches/h6TN8umP5
@@ -27,8 +30,11 @@ let pulseAmount = 1; //how many pixels bigger and smaller each ball gets as it p
 let wander = 1.5; //how many pixels a ball can drift away from its spot.
 let minRadius = 1.5; //*change* the smallest and biggest a ball can be (its radius, before pulsing).
 let maxRadius = 3.5;
+let coverRadius = 15; //*eat* how big a ball grows when it covers your body. bigger than spacing / 2, so they overlap with no gaps.
+let handMargin = 40; //*eat* how many pixels around your hand stay uncovered.
 
 let myBalls = [];
+let eatenSpots = []; //*eat* the grid spots of the balls that got eaten, so new balls can come back to the same places.
 
 //the pause button: stops the pulsing and the wobbling, press again to start them.
 let paused = false;
@@ -110,6 +116,13 @@ let bonusPerSecond = 10; //bonus points for every second still left on the timer
 let holdSeconds = 0.8; //how long you have to hold a hand shape before it counts.
 let readySeconds = 3; //time to read the sentence before the timer starts.
 let messageSeconds = 2.5; //how long the "yes!" or "time's up" message stays before the next sentence.
+
+//*sound* the sound effects. they load in setup(), and stay undefined until they've finished loading.
+let levelUpSound; //you passed a level.
+let handSound; //a hand showed up in front of the camera.
+let correctSound; //you held a sign's hand shape long enough: that sign is done.
+let handSoundGap = 1; //how many seconds the hand has to be gone before it plays handSound again, so a flicker doesn't replay it.
+let handLostTime = -10000; //when the hand was last lost (in millis). starts long ago, so the first hand plays the sound.
 
 //the hand shapes the game can check. each one says which fingers should be up, in the order
 //thumb, index, middle, ring, pinky. true = up, false = folded, null = doesn't matter.
@@ -231,6 +244,17 @@ function setup() {
   makeBalls();
   newSignModel(); //*change*
 
+  //*sound* no await, so the balls show up right away and the sounds are ready a little later (like lab-05's explosion).
+  loadSound("universfield-level-up-06-370051.mp3").then((s) => {
+    levelUpSound = s;
+  });
+  loadSound("djartmusic-magical-sparkle-whoosh-298750.mp3").then((s) => {
+    handSound = s;
+  });
+  loadSound("emand_edroff-fairy-dust-magical-chime-576279.mp3").then((s) => {
+    correctSound = s;
+  });
+
   //no await here: setup() finishes right away, so the balls start straight away.
   //(in p5 2.x, an async setup() makes draw() wait for the whole model download.)
   startCamera();
@@ -272,11 +296,83 @@ function bluePurple() {
 //fills the whole canvas with balls, one every spacing pixels across and down.
 function makeBalls() {
   myBalls = [];
+  eatenSpots = []; //*eat* a whole new grid, so there's nothing left to bring back.
   for (let x = spacing / 2; x < width; x += spacing) {
     for (let y = spacing / 2; y < height; y += spacing) {
       myBalls.push(new Ball(x, y, random(minRadius, maxRadius), bluePurple())); //put smth inside of the array
     }
   }
+}
+
+//*eat* a circle around your hand, in canvas pixels: its middle, and how far out it reaches.
+//balls inside it never cover, so your hand always shows. null when there's no hand.
+function handZone() {
+  if (!smoothHand || !video || video.width === 0) {
+    return null;
+  }
+  let fit = videoFit();
+  let points = smoothHand.keypoints;
+
+  //the middle of the hand is the average of its 21 points.
+  let middleX = 0;
+  let middleY = 0;
+  for (let point of points) {
+    middleX += point.x;
+    middleY += point.y;
+  }
+  middleX /= points.length;
+  middleY /= points.length;
+
+  //the circle reaches the point furthest from the middle, plus a margin.
+  let reach = 0;
+  for (let point of points) {
+    reach = max(reach, dist(point.x, point.y, middleX, middleY));
+  }
+  return {
+    x: middleX * fit.scale + fit.offsetX,
+    y: middleY * fit.scale + fit.offsetY,
+    r: reach * fit.scale + handMargin,
+  };
+}
+
+//*eat* marks some of the covering balls as eaten. they shrink away, then removeEatenBalls() takes them out.
+//the ones closest to your hand go first, so you appear from your hand outwards.
+function eatBalls(howMany) {
+  let covering = myBalls.filter((ball) => ball.covering && !ball.eaten);
+  let zone = handZone();
+  if (zone) {
+    covering.sort((a, b) => dist(a.x, a.y, zone.x, zone.y) - dist(b.x, b.y, zone.x, zone.y));
+  } else {
+    shuffle(covering, true); //no hand: eat them in a random order.
+  }
+  for (let i = 0; i < howMany && i < covering.length; i++) {
+    covering[i].eaten = true;
+  }
+}
+
+//*eat* takes the balls that have finished shrinking out of the array, and remembers their spots.
+function removeEatenBalls() {
+  //going backwards, so removing a ball doesn't skip the next one.
+  for (let i = myBalls.length - 1; i >= 0; i--) {
+    let ball = myBalls[i];
+    if (ball.gone()) {
+      eatenSpots.push({ x: ball.homeX, y: ball.homeY });
+      myBalls.splice(i, 1);
+    }
+  }
+}
+
+//*eat* brings the eaten balls back: a new ball grows in at each spot that was eaten.
+function restoreBalls() {
+  for (let ball of myBalls) {
+    ball.eaten = false; //any ball still shrinking grows back instead.
+  }
+  for (let spot of eatenSpots) {
+    let ball = new Ball(spot.x, spot.y, random(minRadius, maxRadius), bluePurple());
+    ball.grow = 0; //starts at nothing and grows in.
+    myBalls.push(ball);
+  }
+  eatenSpots = [];
 }
 
 //how much the video is scaled up and where it starts, so it covers the canvas without squishing.
@@ -301,7 +397,11 @@ function draw() {
   if (segmentation) {
     fit = videoFit();
     segmentation.mask.loadPixels(); //once per frame, so every ball can read the mask quickly.
-    video.mask(segmentation.mask);
+    //*eat* game mode shows the whole camera, so you can see yourself once the covering balls are eaten.
+    //it also paints over the whole canvas every frame, so eaten balls don't leave marks behind.
+    if (!gameOn) {
+      video.mask(segmentation.mask);
+    }
     image(
       video,
       fit.offsetX,
@@ -310,6 +410,10 @@ function draw() {
       video.height * fit.scale,
     );
   }
+
+  //*eat* while you're signing, the balls on your body cover it. once the sentence is done (or the level is over), they don't.
+  let coverBody = gameOn && gameState !== "success" && gameState !== "levelDone";
+  let zone = handZone();
 
   for (let ball of myBalls) {
     if (segmentation) {
@@ -323,9 +427,10 @@ function draw() {
     if (!paused) {
       ball.move();
     }
-    ball.update(); //every frame, the ball checks if it's clicked or on the person, and picks its colour.
+    ball.update(coverBody, zone); //every frame, the ball checks if it's clicked or on the person, and picks its colour and size.
     ball.show();
   }
+  removeEatenBalls(); //*eat*
 
   //*game* game mode swaps the practice panels for the game. the teaching keys are off while it's on.
   if (gameOn) {
@@ -340,6 +445,13 @@ function draw() {
   guessSign();
   drawHand();
   drawSignPanel();
+}
+
+//*sound* plays a sound, but only once it has loaded (before that, the variable is still undefined).
+function playSound(sound) {
+  if (sound) {
+    sound.play();
+  }
 }
 
 // callback function for body segmentation: ml5 calls this with each new mask.
@@ -359,6 +471,8 @@ function togglePause() {
 
 //click a ball to turn it red. click it again to turn it back.
 function mousePressed(event) {
+  userStartAudio(); //*sound* browsers block sound until the user clicks; this switches it on.
+
   //clicks on the pause button come here too. this skips them, so the ball under the button doesn't turn red.
   if (event && (event.target === pauseButton.elt || event.target === gameButton.elt)) {
     return;
@@ -390,12 +504,19 @@ function gotHands(results) {
   hands = results.filter((hand) => hand.confidence === undefined || hand.confidence >= minHandConfidence);
 
   if (hands.length === 0) {
+    if (smoothHand !== null) {
+      handLostTime = millis(); //*sound* the hand was here last frame, so it was lost just now.
+    }
     smoothHand = null;
     return;
   }
 
   let newPoints = hands[0].keypoints;
   if (smoothHand === null) {
+    //*sound* a hand just showed up. only plays if it was gone for a while, not for a one-frame flicker.
+    if (millis() - handLostTime > handSoundGap * 1000) {
+      playSound(handSound);
+    }
     smoothHand = { keypoints: newPoints.map((point) => ({ x: point.x, y: point.y })) };
     return;
   }
@@ -732,6 +853,7 @@ function drawComplimentGuide(top) {
 
 //turns game mode on and off. turning it on always starts a new game.
 function toggleGame() {
+  userStartAudio(); //*sound* browsers block sound until the user clicks; this switches it on.
   gameOn = !gameOn;
   gameButton.html(gameOn ? "Game mode: on" : "Game mode: off");
   clear(); //wipes the old panels off the canvas, since nothing else clears it.
@@ -739,6 +861,7 @@ function toggleGame() {
     startGame();
   } else {
     demoBox.hide(); //*api*
+    restoreBalls(); //*eat*
   }
 }
 
@@ -763,6 +886,7 @@ function startSentence(index) {
   waitLeft = readySeconds;
   gameState = "ready";
   loadDemo(); //*api*
+  restoreBalls(); //*eat* a new sentence: the eaten balls come back to cover your body again.
 }
 
 //*levels* did you sign at least half of this level's sentences in time?
@@ -930,6 +1054,9 @@ function updateGame() {
       } else {
         gameState = "levelDone"; //*levels*
         demoBox.hide(); //*api*
+        if (levelPassed()) {
+          playSound(levelUpSound); //*sound* only when you passed, not when you have to try the level again.
+        }
       }
     }
     return;
@@ -955,6 +1082,13 @@ function updateGame() {
   }
 
   if (holdTime >= holdSeconds) {
+    //*eat* that sign is done: eat an equal share of the covering balls for each sign left,
+    //so the last sign of the sentence eats all the ones that are left.
+    let signsLeft = steps.length - stepIndex;
+    let covering = myBalls.filter((ball) => ball.covering && !ball.eaten).length;
+    eatBalls(ceil(covering / signsLeft));
+    playSound(correctSound); //*sound*
+
     stepIndex += 1; //that sign is done, on to the next one.
     holdTime = 0;
     if (stepIndex >= steps.length) {
@@ -1157,6 +1291,12 @@ class Ball {
     //the ball only turns red once it's past halfway, so balls on the edge of your outline don't flicker.
     this.bodyAmount = 0;
 
+    //*eat* covering and eating.
+    this.covering = false; //true while it should grow to hide the body. update() sets it every frame.
+    this.cover = 0; //0 = its normal small size, 1 = grown to coverRadius. eases between them so it doesn't pop.
+    this.eaten = false; //eatBalls() sets this. the ball shrinks away, then gets removed from the array.
+    this.grow = 1; //how much of its size it has: 1 = all, 0 = none. shrinks when eaten, grows in when it comes back.
+
     //the pulse: each ball gets its own speed and its own starting point, so they don't all pulse together.
     this.pulseSpeed = random(0.03, 0.1);
     this.pulseStart = random(TWO_PI);
@@ -1164,10 +1304,16 @@ class Ball {
 
   //the radius right now. sin() goes smoothly from -1 to 1 and back,
   //so this goes from pulseAmount smaller to pulseAmount bigger and back.
+  //*eat* covering moves it from its pulsing size towards coverRadius, and grow shrinks it towards nothing.
   size() {
-    return (
-      this.r + sin(pulseTime * this.pulseSpeed + this.pulseStart) * pulseAmount
-    );
+    let pulsing =
+      this.r + sin(pulseTime * this.pulseSpeed + this.pulseStart) * pulseAmount;
+    return lerp(pulsing, coverRadius, this.cover) * this.grow;
+  }
+
+  //*eat* true once an eaten ball has shrunk to almost nothing, so it can be taken out of the array.
+  gone() {
+    return this.eaten && this.grow < 0.05;
   }
 
   //a tiny random step each frame, but never more than wander pixels from home.
@@ -1212,8 +1358,16 @@ class Ball {
   }
 
   //runs every frame: red if it's been clicked OR the person is over it, its own colour if not.
-  update() {
+  //*eat* coverBody: should balls on the body cover it right now? zone: the circle around the hand (or null).
+  update(coverBody, zone) {
     this.bodyAmount = lerp(this.bodyAmount, this.onBody ? 1 : 0, 0.3); //*change*
+
+    //*eat* cover the body, but never the hand.
+    let nearHand = zone && dist(this.homeX, this.homeY, zone.x, zone.y) < zone.r;
+    this.covering = coverBody && this.bodyAmount > 0.5 && !nearHand;
+    this.cover = lerp(this.cover, this.covering ? 1 : 0, 0.2);
+    this.grow = lerp(this.grow, this.eaten ? 0 : 1, 0.15);
+
     if (this.clicked || this.bodyAmount > 0.5) {
       this.highlight();
     } else {
