@@ -102,20 +102,65 @@
       <div id="sketch-holder" class="full-bleed"></div>
 
       <h2>Notes</h2>
+      <p>Try to smile to see flowers!</p>
+
+      <h3>How accurate is the AI?</h3>
       <p>
-        Try to smile to see flowers! Face tracking refrence:
-        https://justadudewhohacks.github.io/face-api.js/docs/index.html
+        The sign reading is a guess, and it gets things wrong. In practice mode, the letter model got about 81% of
+        letters right on a sample of its own training data (its author reports 97%). The game's letter rules are
+        simpler, and less accurate than that. Letters that look alike, like M, N, A, S, T and E, get mixed up most,
+        and J and Z are hard because they move. Lighting, how far you are from the camera, and which hand you use
+        all change the results. If it keeps reading a letter wrong, press <b>Fix</b> and teach it how your hand makes
+        it. The real ASL signs in the demo box are machine-translated, so treat them as a guide, not a teacher.
       </p>
-      <p>
-        Hand button icon: "hand" by loading.io, CC-BY,
-        <a href="https://loading.io/icon/ckjo44">https://loading.io/icon/ckjo44</a>
-      </p>
-      <p>
-        ASL alphabet chart (the ABC button): public domain, from
-        <a href="https://commons.wikimedia.org/wiki/File:Asl_alphabet_gallaudet_ann.svg">Wikimedia Commons</a>.
-        Letter recognition rules adapted from
-        <a href="https://github.com/gurkirat20/Sign_Language_Detection">gurkirat20/Sign_Language_Detection</a>.
-      </p>
+
+      <h3>Sources</h3>
+      <ul>
+        <li>
+          <a href="https://p5js.org/">p5.js</a> and
+          <a href="https://github.com/processing/p5.sound.js">p5.sound</a>, for drawing and sound.
+        </li>
+        <li>
+          <a href="https://ml5js.org/">ml5.js</a>: body segmentation, hand tracking (handPose, which uses MediaPipe
+          Hands) and the neural network for signs you teach it. Body segmentation is based on the ml5.js example
+          <a href="https://editor.p5js.org/ml5/sketches/h6TN8umP5">bodySegmentation-mask-person</a>.
+        </li>
+        <li>
+          Smile tracking: <a href="https://justadudewhohacks.github.io/face-api.js/docs/index.html">face-api.js</a>
+          by Vincent Mühler, loaded through
+          <a href="https://github.com/vladmandic/face-api">@vladmandic/face-api</a> (an updated version that works
+          alongside ml5).
+        </li>
+        <li>
+          Practice mode letters: the trained model from
+          <a href="https://github.com/Muhib-Mehdi/ASL-Recognition-System">ASL-Recognition-System</a> by Muhib Mehdi
+          (MIT license), its weights run in JavaScript.
+        </li>
+        <li>
+          Game letters: rules adapted from
+          <a href="https://github.com/gurkirat20/Sign_Language_Detection">Sign_Language_Detection</a> by gurkirat20.
+        </li>
+        <li>
+          Real ASL sign animations: <a href="https://sign.mt/">sign.mt</a>, played with
+          <a href="https://www.npmjs.com/package/pose-viewer">pose-viewer</a>.
+        </li>
+        <li>
+          ASL alphabet chart (the ABC button): public domain, from
+          <a href="https://commons.wikimedia.org/wiki/File:Asl_alphabet_gallaudet_ann.svg">Wikimedia Commons</a>.
+        </li>
+        <li>
+          Hand buttons: the "hand" icon by loading.io, CC-BY,
+          <a href="https://loading.io/icon/ckjo44">loading.io/icon/ckjo44</a>, recoloured.
+        </li>
+        <li>
+          Endless levels: inspired by the "Random Numbers" game in
+          <a href="https://github.com/Narottam04/SignLanguage">Gesture Academy</a> by Narottam04 (MIT license).
+        </li>
+        <li>
+          Sound effects: "level up" by universfield, "magical sparkle whoosh" by djartmusic and "fairy dust magical
+          chime" by emand_edroff, from <a href="https://pixabay.com/sound-effects/">Pixabay</a>.
+        </li>
+      </ul>
       <nav>
         <a href="shapes/index.html">Shapes-Ladybug</a>
         <a href="turtle/index.html">Turtle-Drawing-initals</a>

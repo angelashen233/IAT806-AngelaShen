@@ -10,6 +10,8 @@
 //   against a timer. finishing a sentence in time gives points, plus bonus points for the seconds left.
 // - *game* even smaller balls, in pastel light blue and light purple.
 // - *levels* the game has 3 levels: 1 single signs, 2 short sentences, 3 longer sentences from memory.
+// - *endless* after level 3 it never ends: it keeps making new levels of random signs and alphabet letters,
+//   each with more signs, less time and more points.
 // - *api* in levels 1 and 2, a box shows the real ASL sign as a moving stick figure. it comes from sign.mt's free API.
 // - *eat* in game mode, each sign you finish eats some of the balls on your body (splice), from your hand outwards.
 //   they come back (push) for the next sentence.
@@ -22,6 +24,10 @@
 //   with help on, the sign it recognises floats above your hand, and the demo box plays its real ASL sign.
 // - *letters* it reads ASL alphabet letters (A to Y, not J or Z) from your hand points, with no teaching needed.
 // - *chart* the ABC button shows an ASL alphabet chart on the left, to copy the hand shapes from.
+// - *model* practice mode reads letters A to Z with a trained model (Muhib Mehdi's); the game still uses the rules.
+// - *mirror* the camera is shown like a mirror.
+// - *fix* the Fix button pauses the game so you can teach it how your hand makes letters it reads wrong.
+// - *j* J is spotted from its movement: an I, then a swing of the pinky.
 //
 // REFERENCES
 // body segmentation: ml5.js example "bodySegmentation-mask-person", https://editor.p5js.org/ml5/sketches/h6TN8umP5
@@ -34,6 +40,8 @@
 // (code: https://github.com/justadudewhohacks/face-api.js). loaded through @vladmandic/face-api 1.7.15 by Vladimir Mandic,
 // an updated version of face-api.js that works alongside ml5, https://github.com/vladmandic/face-api
 // *ui* the hand-shaped buttons: the "hand" icon by loading.io (CC-BY), recoloured, https://loading.io/icon/ckjo44
+// *model* the practice letter model: ASL-Recognition-System by Muhib Mehdi (MIT license), weights in
+// asl-letter-model.json, https://github.com/Muhib-Mehdi/ASL-Recognition-System
 // *letters* the alphabet letter rules: translated from gurkirat20's Sign_Language_Detection (Python, MediaPipe),
 // https://github.com/gurkirat20/Sign_Language_Detection
 // *chart* the ASL alphabet chart (asl-alphabet.svg): "Asl alphabet gallaudet ann.svg" by Marnanel, based on images by
@@ -300,7 +308,8 @@ function levelTitle() {
 //is the hand making this step's sign? a letter is checked with the alphabet rules, the rest by hand shape.
 function stepMatches(hand, step) {
   if (step.letter) {
-    return aslLetter(hand) === step.letter;
+    //*fix* a letter you taught it in Fix mode counts too.
+    return aslLetter(hand) === step.letter || taughtLetter() === step.letter;
   }
   return matchesShape(hand, step.shape);
 }
@@ -365,10 +374,24 @@ function setup() {
   chartButton.position(292, 10);
   chartButton.mousePressed(toggleChart);
   makeChartBox();
+
+  //*fix* the Fix button: pauses the game and lets you teach it how your hand makes a letter.
+  fixButton = createButton("Fix: off");
+  fixButton.parent("sketch-holder");
+  fixButton.class("hand-button blue");
+  fixButton.position(384, 10);
+  fixButton.mousePressed(toggleFix);
   makeDemoBox(); //*api*
 
   makeBalls();
   newSignModel(); //*change*
+
+  //*model* the practice mode letter model's numbers. like the sounds, it's ready a little later.
+  fetch("asl-letter-model.json")
+    .then((response) => response.json())
+    .then((model) => {
+      letterModel = model;
+    });
 
   //*sound* no await, so the balls show up right away and the sounds are ready a little later (like lab-05's explosion).
   loadSound("universfield-level-up-06-370051.mp3").then((s) => {
@@ -491,7 +514,7 @@ function handMiddle() {
   middleY /= points.length;
 
   return {
-    x: middleX * fit.scale + fit.offsetX,
+    x: videoToCanvasX(middleX, fit), //*mirror*
     y: middleY * fit.scale + fit.offsetY,
   };
 }
@@ -594,7 +617,7 @@ function drawFlower(fit) {
   //only on the room. the person, drawn underneath in the video, shows through in front of it.
   let flower = g.get();
   flower.mask(segmentation.mask);
-  image(flower, fit.offsetX, fit.offsetY, video.width * fit.scale, video.height * fit.scale);
+  drawCameraImage(flower, fit); //*mirror* mirrored like the camera, so it stays lined up with you.
 }
 
 //how much the video is scaled up and where it starts, so it covers the canvas without squishing.
@@ -605,6 +628,36 @@ function videoFit() {
   let offsetX = (width - video.width * scale) / 2;
   let offsetY = (height - video.height * scale) / 2;
   return { scale: scale, offsetX: offsetX, offsetY: offsetY };
+}
+
+// ---------------------------------------------------------------------------
+// *mirror* the camera is shown like a mirror: raise your right hand and the one on the right of the screen moves.
+// only the picture is flipped. the hand, body and face tracking still look at the camera the normal way round
+// (the letter readers were made for that), so these turn camera positions into mirrored screen positions.
+// ---------------------------------------------------------------------------
+let mirrorView = true; //false shows the camera the normal way round, like before.
+
+//a camera x position (in camera pixels) -> where it is on the canvas.
+function videoToCanvasX(x, fit) {
+  return (mirrorView ? video.width - x : x) * fit.scale + fit.offsetX;
+}
+
+//a canvas x position -> where it is in the camera picture (the other way round from above).
+function canvasToVideoX(canvasX, fit) {
+  let x = (canvasX - fit.offsetX) / fit.scale;
+  return mirrorView ? video.width - x : x;
+}
+
+//draws the camera (or anything the camera's size, like the flower) to fill the canvas, mirrored if mirrorView is on.
+//flipping the whole canvas left-right puts it back in the same spot, because it's centred.
+function drawCameraImage(picture, fit) {
+  push();
+  if (mirrorView) {
+    translate(width, 0);
+    scale(-1, 1);
+  }
+  image(picture, fit.offsetX, fit.offsetY, video.width * fit.scale, video.height * fit.scale);
+  pop();
 }
 
 //order: the masked video first, then the balls on top of it, then the hand and the sign text on top of everything.
@@ -625,13 +678,7 @@ function draw() {
     //*eat* shows the whole camera, so you can see yourself (and the flower can open behind you).
     //*ui* practice mode used to mask you out of the video, which left a white shape where you were. now both
     //modes show you. the mask is still used to find the balls on your body and to put the flower behind you.
-    image(
-      video,
-      fit.offsetX,
-      fit.offsetY,
-      video.width * fit.scale,
-      video.height * fit.scale,
-    );
+    drawCameraImage(video, fit); //*mirror*
   }
   if (segmentation && fit) {
     segmentation.mask.loadPixels(); //once per frame, so every ball can read the mask quickly.
@@ -666,9 +713,18 @@ function draw() {
 
   //*game* game mode swaps the practice panels for the game. the teaching keys are off while it's on.
   if (gameOn) {
-    updateGame();
+    guessSign(); //*fix* so letters you taught in Fix mode count in the game too.
+    if (fixing) {
+      collectSample(); //*fix* the game waits (updateGame isn't called) while you teach it.
+    } else {
+      updateGame();
+    }
     drawHand();
-    drawGamePanel();
+    if (fixing) {
+      drawFixPanel(); //*fix*
+    } else {
+      drawGamePanel();
+    }
     return;
   }
 
@@ -678,8 +734,79 @@ function draw() {
   shownLetter = steadyLetter(); //*letters*
   drawHand();
   drawSignPanel();
+  if (fixing) {
+    drawFixPanel(); //*fix*
+  }
   drawHandLabel(); //*ui*
   updatePracticeDemo(); //*ui*
+}
+
+// ---------------------------------------------------------------------------
+// *fix* FIX MODE: when it keeps reading a letter wrong (like M, or N read as A), teach it how YOUR hand makes it.
+// it uses the same teaching as practice mode (hold a letter's key, then Enter), and pauses the game while it's on.
+// what you teach decides between the letters you taught; every other letter is still read the usual way.
+// ---------------------------------------------------------------------------
+let fixButton;
+let fixing = false;
+
+function toggleFix() {
+  fixing = !fixing;
+  fixButton.html(fixing ? "Fix: on" : "Fix: off");
+  placeChartBox(); //the chart moves aside, so you can see the Fix panel and the chart together.
+}
+
+//a letter you taught it, if it's sure it sees one right now. "" if not.
+function taughtLetter() {
+  if (modelState !== "ready" || !shownGuess || shownGuess.confidence < complimentConfidence) {
+    return "";
+  }
+  return findCompliment(shownGuess.label) ? "" : shownGuess.label;
+}
+
+//the Fix mode panel, on the left where the instructions (or the game panel) usually go.
+function drawFixPanel() {
+  let w = min(panelWidth, width - 32);
+  let lines = [
+    "1. make the letter it gets wrong, like M",
+    "2. hold its key (M), moving your hand a little, for 50+ saves",
+    "3. teach the letters it mixes it up with too (like N and A)",
+    "4. press Enter to learn them. Backspace = start over.",
+    "",
+  ];
+  let taught = Object.entries(sampleCounts).map((entry) => entry[0] + ": " + entry[1]);
+  if (modelState === "collecting") {
+    lines.push(taught.length > 0 ? "saved: " + taught.join("   ") : "nothing saved yet");
+  } else if (modelState === "training") {
+    lines.push("learning... round " + trainingRound + " of " + trainingRounds);
+  } else {
+    lines.push("learned! your letters: " + Object.keys(sampleCounts).join(", "));
+  }
+  if (warning) {
+    lines.push(warning);
+  }
+  //what each reader sees right now, so you can tell which one is wrong.
+  let readers = gameOn ? "game rules: " + (smoothHand ? aslLetter(smoothHand) || "?" : "-") : "model: " + (shownLetter || "?");
+  lines.push(readers + "   ·   yours: " + (taughtLetter() || "?"));
+  lines.push("");
+  lines.push("AI readings can be wrong: the letter model missed about");
+  lines.push("1 in 5 on its own test. M, N, A, S, T and E look alike to it.");
+
+  let boxHeight = 50 + lines.length * 18 + (warning ? 18 : 0);
+  push();
+  noStroke();
+  fill(...gamePaper, panelAlpha);
+  softPanel(16, panelTop, w, boxHeight);
+  fill(...gameInk);
+  textAlign(LEFT, TOP);
+  textSize(14);
+  textStyle(BOLD);
+  text("FIX MODE: teach it YOUR hand" + (gameOn ? "  (game paused)" : ""), 30, panelTop + 12);
+  textStyle(NORMAL);
+  textSize(11.5);
+  for (let i = 0; i < lines.length; i++) {
+    text(lines[i], 30, panelTop + 36 + i * 18, w - 28);
+  }
+  pop();
 }
 
 //*sound* plays a sound, but only once it has loaded (before that, the variable is still undefined).
@@ -747,8 +874,9 @@ function makeChartBox() {
 //*chart* in practice mode it goes where the instructions are (they hide while it's open);
 //in game mode it goes under the game panel. it never runs off the bottom of the canvas: it scrolls instead.
 function placeChartBox() {
-  let top = gameOn ? panelTop + gamePanelHeight() + 12 : panelTop;
-  chartBox.position(16, top);
+  let top = gameOn && !fixing ? panelTop + gamePanelHeight() + 12 : panelTop;
+  let left = fixing ? 16 + min(panelWidth, width - 32) + 12 : 16; //*fix* beside the Fix panel, not on top of it
+  chartBox.position(left, top);
   chartBox.style("max-height", max(120, height - top - 16) + "px");
 }
 
@@ -780,6 +908,7 @@ function mousePressed(event) {
       event.target === gameButton.elt ||
       event.target === helpButton.elt ||
       event.target === chartButton.elt ||
+      event.target === fixButton.elt ||
       chartBox.elt.contains(event.target));
   if (onButton) {
     return;
@@ -900,6 +1029,7 @@ function findCompliment(label) {
 // numbers (0 = wrist, 4 = thumb tip, 8 = index tip, 12 = middle tip, 16 = ring tip, 20 = pinky tip).
 // it's a list of rules about where the fingertips are, so it knows A to Y without being taught
 // (not J or Z, since those letters move). it works best with your right hand, palm facing the camera.
+// *model* the game uses these rules; practice mode uses the trained model below instead.
 // ---------------------------------------------------------------------------
 let letterHistory = []; //the last few letters it read, so one odd frame doesn't change the letter shown.
 let lettersToKeep = 8;
@@ -971,13 +1101,128 @@ function aslLetter(hand) {
   return "";
 }
 
-//the letter to show: only one that most of the last few readings agree on, so it doesn't flicker. "" if none.
+// ---------------------------------------------------------------------------
+// *model* PRACTICE MODE LETTERS: A TRAINED MODEL
+// practice mode reads letters with Muhib Mehdi's trained model from ASL-Recognition-System (MIT license),
+// https://github.com/Muhib-Mehdi/ASL-Recognition-System . it learned A to Z from thousands of hand photos, so it's
+// more accurate than the rules above (those are still used by the game). its numbers (weights) were copied from
+// its keypoint_classifier.keras file into asl-letter-model.json, and the code below does the same maths in JavaScript.
+// it looks at one moment at a time, so J and Z (which move) are its weakest letters. on a sample of its own
+// training data it got about 81% right (its author reports 97%), so expect the odd wrong letter.
+// ---------------------------------------------------------------------------
+let letterModel; //the model's numbers. loaded in setup(), and undefined until then.
+let modelConfidence = 0.6; //how sure the model has to be (0 to 1) before a letter counts.
+
+//the 42 numbers the model takes, made the same way as its original Python code (pre_process_landmark):
+//each point measured from the wrist, as x, y, x, y, ..., then all divided by the biggest one, so hand size doesn't matter.
+function handToModelInputs(hand) {
+  let p = hand.keypoints;
+  //it learned from photos of RIGHT hands, not mirrored (in its training data the thumb side is on the right of the
+  //picture), which is how our camera sees a right hand. so a left hand is flipped left-right to look like a right one.
+  //(the hand model labels hands as if the camera picture were mirrored, so "Right" means your left hand.)
+  let flip = hand.handedness === "Right";
+  let numbers = [];
+  for (let point of p) {
+    let x = point.x - p[0].x;
+    let y = point.y - p[0].y;
+    numbers.push(flip ? -x : x, y);
+  }
+  let biggest = max(numbers.map((n) => abs(n)));
+  return numbers.map((n) => n / biggest);
+}
+
+//mish: the curve the model puts each layer's numbers through. (for big numbers it's just the number itself.)
+function mish(x) {
+  return x > 20 ? x : x * Math.tanh(Math.log1p(Math.exp(x)));
+}
+
+//turns the last layer's numbers into chances that add up to 1.
+function softmax(numbers) {
+  let biggest = Math.max(...numbers);
+  let powers = numbers.map((n) => Math.exp(n - biggest));
+  let total = powers.reduce((sum, n) => sum + n, 0);
+  return powers.map((n) => n / total);
+}
+
+//runs the model: 42 numbers in, a chance (0 to 1) for each letter A to Z out.
+//first it evens out the inputs (batch normalisation), then 4 layers that each multiply by their weights and add a bias.
+function runLetterModel(inputs) {
+  let norm = letterModel.batchNorm;
+  let values = inputs.map(
+    (v, i) => (norm.gamma[i] * (v - norm.mean[i])) / Math.sqrt(norm.variance[i] + norm.epsilon) + norm.beta[i],
+  );
+  for (let layer = 0; layer < letterModel.dense.length; layer++) {
+    let weights = letterModel.dense[layer].weights;
+    let next = letterModel.dense[layer].bias.slice();
+    for (let i = 0; i < values.length; i++) {
+      for (let j = 0; j < next.length; j++) {
+        next[j] += values[i] * weights[i][j];
+      }
+    }
+    let lastLayer = layer === letterModel.dense.length - 1;
+    values = lastLayer ? softmax(next) : next.map(mish);
+  }
+  return values;
+}
+
+//the model's letter for this hand, or "" if it isn't sure enough (or hasn't loaded yet).
+function modelLetter(hand) {
+  if (!letterModel) {
+    return "";
+  }
+  let chances = runLetterModel(handToModelInputs(hand));
+  let best = chances.indexOf(Math.max(...chances));
+  return chances[best] >= modelConfidence ? letterModel.labels[best] : "";
+}
+
+//*j* J moves: it's the I hand shape (pinky up), then the pinky swings down and round, like drawing a J.
+//one still picture can't show that, so this watches the pinky tip: an I followed by a big pinky swing = J.
+let pinkyTrail = []; //where the pinky tip has been in the last moment, measured in hand sizes.
+let jSeconds = 1.2; //how long after an I the swing can come.
+let jShownUntil = 0; //J stays on screen until this time (in millis), so you can see it after the swing.
+
+//true when it spots the J swing.
+function spottedJ(hand, letter) {
+  let p = hand.keypoints;
+  //measured in hand sizes (wrist to middle knuckle), so it's the same near and far from the camera.
+  let handSize = dist(p[0].x, p[0].y, p[9].x, p[9].y);
+  pinkyTrail.push({ x: p[20].x / handSize, y: p[20].y / handSize, time: millis(), wasI: letter === "I" });
+  pinkyTrail = pinkyTrail.filter((spot) => millis() - spot.time < jSeconds * 1000); //forget older spots.
+
+  //from the first I in the trail: how far did the pinky travel, and how far sideways did it end up?
+  let start = pinkyTrail.findIndex((spot) => spot.wasI);
+  if (start < 0) {
+    return false;
+  }
+  let travelled = 0;
+  for (let i = start + 1; i < pinkyTrail.length; i++) {
+    travelled += dist(pinkyTrail[i - 1].x, pinkyTrail[i - 1].y, pinkyTrail[i].x, pinkyTrail[i].y);
+  }
+  let sideways = abs(pinkyTrail[pinkyTrail.length - 1].x - pinkyTrail[start].x);
+  if (travelled > 1 && sideways > 0.35) {
+    pinkyTrail = []; //start fresh, so one swing only counts once.
+    return true;
+  }
+  return false;
+}
+
+//the letter to show in practice mode: only one that most of the last few readings agree on, so it doesn't flicker.
+//"" if none. *model* it reads letters with the trained model above.
 function steadyLetter() {
   if (!smoothHand || !video || video.width === 0) {
     letterHistory = [];
+    pinkyTrail = []; //*j*
     return "";
   }
-  letterHistory.push(aslLetter(smoothHand));
+  //*j* an I, then a pinky swing: show J for a second.
+  let letter = modelLetter(smoothHand);
+  if (spottedJ(smoothHand, letter)) {
+    jShownUntil = millis() + 1000;
+  }
+  if (millis() < jShownUntil) {
+    return "J";
+  }
+  letterHistory.push(letter);
   if (letterHistory.length > lettersToKeep) {
     letterHistory.shift(); //forget the oldest one.
   }
@@ -994,8 +1239,11 @@ function currentHandSign() {
   if (compliment) {
     return { label: compliment.emoji, words: compliment.sentence };
   }
-  if (modelState === "ready" && shownGuess && shownGuess.confidence >= complimentConfidence) {
-    return { label: shownGuess.label, words: shownGuess.label };
+  //*fix* a letter you taught it wins when the model is unsure, or when the model reads another letter you taught
+  //(that's the mix-up you were correcting, like N read as A). other letters stay with the model.
+  let yours = taughtLetter();
+  if (yours && (!shownLetter || sampleCounts[shownLetter] !== undefined)) {
+    return { label: yours, words: yours };
   }
   if (shownLetter) {
     return { label: shownLetter, words: shownLetter };
@@ -1016,11 +1264,12 @@ function currentCompliment() {
 function keyPressed() {
   //*game* in game mode the teaching keys do nothing.
   //*levels* Enter moves on when a level is done, and 1, 2, 3 jump straight to a level.
-  if (gameOn) {
+  //*fix* in Fix mode the teaching keys work in the game too (Enter and Backspace below), and the game keys don't.
+  if (gameOn && !fixing) {
     if (key === "Enter" && gameState === "levelDone") {
       nextLevel();
     }
-    if (key >= "1" && key <= String(levels.length)) {
+    if (key >= "1" && key <= String(mainLevels)) { //*endless* only the 3 written levels have keys
       score = 0;
       startLevel(Number(key) - 1);
     }
@@ -1125,7 +1374,7 @@ function drawHand() {
   fill(0, 255, 140);
   for (let point of smoothHand.keypoints) {
     circle(
-      point.x * fit.scale + fit.offsetX,
+      videoToCanvasX(point.x, fit), //*mirror*
       point.y * fit.scale + fit.offsetY,
       10,
     );
@@ -1176,7 +1425,7 @@ function drawSignPanel() {
   textAlign(LEFT, TOP);
 
   //*chart* the alphabet chart sits where the instructions go, so they hide while it's open.
-  if (showHelp && !showChart) {
+  if (showHelp && !showChart && !fixing) { //*fix* the Fix panel goes here instead while it's on
     //worked out first, so the compliment guide can go right under it. a warning is long, so it gets room for 2 lines.
     let boxHeight = 44 + lines.length * 19 + (warning ? 19 : 0);
     fill(...gamePaper, panelAlpha);
@@ -1301,6 +1550,7 @@ function toggleGame() {
 
 function startGame() {
   score = 0;
+  levels.length = mainLevels; //*endless* forget the endless levels from last game, so new ones get made.
   startLevel(0);
 }
 
@@ -1330,16 +1580,17 @@ function levelPassed() {
 }
 
 //*levels* Enter on the "level done" screen: up a level if you passed, the same level again if not.
-//after the last level, it starts again from level 1.
+//*endless* after the last level, it makes a new one, so it never runs out.
 function nextLevel() {
   if (!levelPassed()) {
     score -= levelScore; //trying again, so this level's points come back off.
     startLevel(levelIndex);
-  } else if (levelIndex + 1 < levels.length) {
-    startLevel(levelIndex + 1);
-  } else {
-    startGame();
+    return;
   }
+  if (levelIndex + 1 >= levels.length) {
+    levels.push(makeEndlessLevel(levels.length + 1));
+  }
+  startLevel(levelIndex + 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -1443,7 +1694,7 @@ function updatePracticeDemo() {
       showSign(sign.words);
     }
   } else if (demoWords === "") {
-    demoCaption.html("Make an alphabet letter (A to Y) or a compliment you taught it: its real ASL sign will show up here.");
+    demoCaption.html("Make an alphabet letter (A to Z) or a compliment you taught it: its real ASL sign will show up here.");
   }
 }
 
@@ -1647,7 +1898,7 @@ function drawGamePanel() {
   textSize(13);
   textStyle(BOLD);
   text(
-    "LEVEL " + (levelIndex + 1) + " of " + levels.length + "  ·  " + (sentenceIndex + 1) + " of " + level.sentences.length,
+    levelTitle() + "  ·  " + (sentenceIndex + 1) + " of " + level.sentences.length, //*endless*
     left + 14,
     top + 12,
   );
@@ -1661,7 +1912,7 @@ function drawGamePanel() {
   //*ui* starts at 30 and shrinks until the sentence fits beside the seconds.
   let sentenceSize = 30;
   textSize(sentenceSize);
-  while (textWidth(current.sentence) > panelWidth - 90 && sentenceSize > 14) {
+  while (textWidth(current.sentence) > panelWidth - 90 && sentenceSize > 11) { //*endless* mixes can be long, so it goes down to 11
     sentenceSize -= 1;
     textSize(sentenceSize);
   }
@@ -1749,12 +2000,10 @@ function drawGamePanel() {
 function drawLevelDone(left, top, panelWidth, panelHeight) {
   let level = levels[levelIndex];
   let learned = sentenceResults.filter((result) => result).length;
-  let lastLevel = levelIndex + 1 === levels.length;
-
   fill(...gameInk);
   textSize(14);
   textStyle(BOLD);
-  text("LEVEL " + (levelIndex + 1) + " of " + levels.length + "  ·  done!", left + 14, top + 12); //*ui* no level name, so it fits
+  text(levelTitle() + "  ·  done!", left + 14, top + 12); //*ui* no level name, so it fits. *endless*
   textSize(30);
   text("Score: " + score, left + 14, top + 36);
   textStyle(NORMAL);
@@ -1769,8 +2018,9 @@ function drawLevelDone(left, top, panelWidth, panelHeight) {
   let next;
   if (!levelPassed()) {
     next = "Not quite half yet. Press Enter to try level " + (levelIndex + 1) + " again.";
-  } else if (lastLevel) {
-    next = "You finished all " + levels.length + " levels! Press Enter to play again from level 1.";
+  } else if (levelIndex + 1 >= mainLevels) {
+    //*endless* from level 3 on, the next level is a new endless one.
+    next = "Level passed! Press Enter for endless level " + (levelIndex + 2) + ": more signs, less time.";
   } else {
     next = "Level passed! Press Enter for level " + (levelIndex + 2) + ".";
   }
@@ -1850,7 +2100,7 @@ class Ball {
   isOnBody(mask, scale, offsetX, offsetY) {
     //turn the canvas position into a position in the mask. the mask is the camera's size
     //(like 640 x 480), and the video is scaled up and centred in draw(), so this undoes that.
-    let maskX = floor((this.x - offsetX) / scale);
+    let maskX = floor(canvasToVideoX(this.x, { scale: scale, offsetX: offsetX })); //*mirror*
     let maskY = floor((this.y - offsetY) / scale);
 
     //outside the mask (can happen right at the edges): not on the body.
