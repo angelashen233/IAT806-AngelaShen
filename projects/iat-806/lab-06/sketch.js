@@ -54,6 +54,7 @@ let smileTarget = 0; //how much you're smiling in the latest check, 0 to 1 (face
 let smile = 0; //the same, but eased towards smileTarget every frame, so the balls brighten smoothly instead of flickering.
 let smileChecksPerSecond = 10; //how often it looks for your smile. a smile doesn't need more, and it leaves the computer free for hand tracking.
 let flowerPetals = 5; //how many petals each little ball-flower has when it blooms.
+let flowerSize = 1.7; //how big the open flowers are. 1 = a little bigger than the ball; 2 = they start to touch.
 
 let myBalls = [];
 let eatenSpots = []; //*eat* the grid spots of the balls that got eaten, so new balls can come back to the same places.
@@ -238,6 +239,71 @@ let levels = [
     ],
   },
 ];
+
+// ---------------------------------------------------------------------------
+// *endless* after the 3 levels above, the game keeps going: each new level is made up on the spot,
+// with random mixes of the signs above and fingerspelled alphabet letters. every level gets a bit harder:
+// more signs in each sentence, less time, more points, and from level 6 the hints are hidden.
+// the idea of an endless random practice comes from Gesture Academy's "Random Numbers" game,
+// https://github.com/Narottam04/SignLanguage (MIT license). no code was copied from it.
+// ---------------------------------------------------------------------------
+let mainLevels = levels.length; //the 3 written-out levels. levels after these are endless ones.
+
+//the alphabet letters the endless levels use. they're checked by aslLetter() (see *letters*), so these are the
+//ones with clear finger patterns, which it reads most reliably. letter: true tells the game to check the letter.
+let letterSigns = [
+  { sign: "letter B", letter: "B", emoji: "B", how: "flat hand, fingers together and up, thumb folded across your palm" },
+  { sign: "letter D", letter: "D", emoji: "D", how: "index finger up, the other fingertips touch your thumb" },
+  { sign: "letter I", letter: "I", emoji: "I", how: "pinky up, the other fingers in a fist, thumb across them" },
+  { sign: "letter L", letter: "L", emoji: "L", how: "index finger up and thumb out to the side, like an L" },
+  { sign: "letter V", letter: "V", emoji: "V", how: "index and middle fingers up in a V, thumb holds the others down" },
+  { sign: "letter W", letter: "W", emoji: "W", how: "index, middle and ring fingers up, thumb holds your pinky down" },
+  { sign: "letter Y", letter: "Y", emoji: "Y", how: "thumb and pinky out, the other fingers folded" },
+];
+
+//makes endless level number n (4, 5, 6, ...).
+function makeEndlessLevel(n) {
+  let extra = n - mainLevels; //1 for level 4, 2 for level 5, ...
+  let pool = Object.values(signs).concat(letterSigns); //every sign it can choose from.
+  let signsEach = min(5, 2 + floor(extra / 2)); //2 signs, then 3, 4, and at most 5.
+  let sentences = [];
+  for (let i = 0; i < 4; i++) {
+    let steps = [];
+    while (steps.length < signsEach) {
+      let pick = random(pool);
+      //never the same sign twice in a row, or holding it once would finish both.
+      if (steps.length === 0 || steps[steps.length - 1] !== pick) {
+        steps.push(pick);
+      }
+    }
+    //the "sentence" is the signs in order, like "HELP · letter B · YOU".
+    sentences.push({ sentence: steps.map((step) => step.sign).join(" · "), steps: steps });
+  }
+  return {
+    name: "Endless " + n,
+    seconds: max(8, 20 - extra * 1.5), //less time each level, but never under 8 seconds.
+    points: 200 + extra * 50,
+    showHow: n < 6, //from level 6, from memory.
+    showDemo: false, //random mixes aren't real sentences, so there's no real-sign demo for them.
+    sentences: sentences,
+  };
+}
+
+//how the level is named on the panel: "LEVEL 2 of 3" for the written ones, "LEVEL 5 · endless" after them.
+function levelTitle() {
+  if (levelIndex < mainLevels) {
+    return "LEVEL " + (levelIndex + 1) + " of " + mainLevels;
+  }
+  return "LEVEL " + (levelIndex + 1) + " · endless";
+}
+
+//is the hand making this step's sign? a letter is checked with the alphabet rules, the rest by hand shape.
+function stepMatches(hand, step) {
+  if (step.letter) {
+    return aslLetter(hand) === step.letter;
+  }
+  return matchesShape(hand, step.shape);
+}
 
 //where the game is right now.
 let gameState = "ready"; //"ready" (reading time), "playing", "success", "timeup", or "levelDone".
@@ -617,8 +683,10 @@ function draw() {
 }
 
 //*sound* plays a sound, but only once it has loaded (before that, the variable is still undefined).
+//*fix* also waits until sound is allowed: browsers block it until the first click, and trying before that
+//threw an error (the "hand found" sound often comes before any click).
 function playSound(sound) {
-  if (sound) {
+  if (sound && getAudioContext().state === "running") {
     sound.play();
   }
 }
@@ -1499,7 +1567,7 @@ function updateGame() {
   //holding the right shape fills the hold bar. letting go drains it (quickly, but not all at once,
   //so one shaky frame doesn't throw away your hold).
   let steps = level.sentences[sentenceIndex].steps;
-  if (smoothHand && matchesShape(smoothHand, steps[stepIndex].shape)) {
+  if (smoothHand && stepMatches(smoothHand, steps[stepIndex])) { //*endless* letters or hand shapes
     holdTime += seconds;
   } else {
     holdTime = max(0, holdTime - seconds * 2);
@@ -1855,8 +1923,8 @@ class Ball {
     //flowers on you are see-through, so they don't cover your face and body.
     let petalAlpha = this.bodyAmount > 0.5 ? 0.45 : 1;
     ctx.fillStyle = "rgba(" + petalRed + "," + petalGreen + "," + petalBlue + "," + petalAlpha + ")";
-    let spread = r * 0.9 * this.bloom; //how far each petal has moved out from the middle.
-    let petalRadius = r * (0.55 + 0.3 * this.bloom); //the petals grow a little as they open.
+    let spread = r * 0.9 * flowerSize * this.bloom; //how far each petal has moved out from the middle.
+    let petalRadius = r * (0.55 + 0.3 * this.bloom) * flowerSize; //the petals grow a little as they open.
     ctx.beginPath();
     for (let i = 0; i < flowerPetals; i++) {
       let angle = this.turn + (TWO_PI * i) / flowerPetals;
@@ -1870,7 +1938,7 @@ class Ball {
     //the yellow middle, growing in as it opens.
     ctx.fillStyle = "rgb(255,220,120)";
     ctx.beginPath();
-    ctx.arc(this.x, this.y, r * 0.5 * this.bloom, 0, TWO_PI);
+    ctx.arc(this.x, this.y, r * 0.5 * flowerSize * this.bloom, 0, TWO_PI);
     ctx.fill();
   }
 }
