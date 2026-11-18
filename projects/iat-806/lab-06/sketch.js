@@ -20,6 +20,8 @@
 // - *ui* practice and game mode share one look: narrow see-through pastel cards with wobbly corners, and pastel
 //   hand-shaped buttons. the Help button hides the practice instructions so they don't cover you.
 //   with help on, the sign it recognises floats above your hand, and the demo box plays its real ASL sign.
+// - *letters* it reads ASL alphabet letters (A to Y, not J or Z) from your hand points, with no teaching needed.
+// - *chart* the ABC button shows an ASL alphabet chart on the left, to copy the hand shapes from.
 //
 // REFERENCES
 // body segmentation: ml5.js example "bodySegmentation-mask-person", https://editor.p5js.org/ml5/sketches/h6TN8umP5
@@ -32,6 +34,10 @@
 // (code: https://github.com/justadudewhohacks/face-api.js). loaded through @vladmandic/face-api 1.7.15 by Vladimir Mandic,
 // an updated version of face-api.js that works alongside ml5, https://github.com/vladmandic/face-api
 // *ui* the hand-shaped buttons: the "hand" icon by loading.io (CC-BY), recoloured, https://loading.io/icon/ckjo44
+// *letters* the alphabet letter rules: translated from gurkirat20's Sign_Language_Detection (Python, MediaPipe),
+// https://github.com/gurkirat20/Sign_Language_Detection
+// *chart* the ASL alphabet chart (asl-alphabet.svg): "Asl alphabet gallaudet ann.svg" by Marnanel, based on images by
+// Dancor and Ds13, public domain, https://commons.wikimedia.org/wiki/File:Asl_alphabet_gallaudet_ann.svg
 
 //settings: change these to see what happens.
 let spacing = 20; //how many pixels apart the balls' spots are. smaller = more balls (but slower: 16 dropped to ~10 fps).
@@ -62,6 +68,12 @@ let showHelp = true; //the help button flips this. false hides the practice inst
 let panelTop = 122; //how far down the panels start, so they sit just under the hand buttons.
 let panelWidth = 380; //the panels are narrow, so they stay at the side and cover less of you.
 let panelAlpha = 215; //how solid the panels are, 0 to 255. lower = more of you shows through.
+
+//*chart* the ASL alphabet chart, shown and hidden with the ABC button.
+let chartButton;
+let chartBox; //the card on the page that holds the chart picture.
+let showChart = false;
+let chartWidth = 300; //how wide the chart card is, in pixels. it scrolls if it's taller than the space below it.
 let pulseTime = 0; //the pulse clock. it only counts up while not paused, so the balls freeze mid-pulse.
 
 //body segmentation
@@ -279,6 +291,14 @@ function setup() {
   helpButton.class("hand-button pink");
   helpButton.position(200, 10);
   helpButton.mousePressed(toggleHelp);
+
+  //*chart* the ABC button shows the ASL alphabet chart.
+  chartButton = createButton("ABC: off");
+  chartButton.parent("sketch-holder");
+  chartButton.class("hand-button");
+  chartButton.position(292, 10);
+  chartButton.mousePressed(toggleChart);
+  makeChartBox();
   makeDemoBox(); //*api*
 
   makeBalls();
@@ -346,6 +366,7 @@ function windowResized() {
   resizeCanvas(sketch_holder_width(), windowHeight);
   makeBalls();
   placeDemoBox(); //*api*
+  placeChartBox(); //*chart*
 }
 
 //a random colour somewhere between pastel light blue and pastel light purple.
@@ -531,9 +552,10 @@ function draw() {
   }
 
   let fit;
-  if (segmentation) {
+  //*ui* the camera shows as soon as it has a picture (readyState 2 or more), instead of waiting for the body
+  //model to download, which can take a while on a slow connection.
+  if (video && video.elt.readyState >= 2) {
     fit = videoFit();
-    segmentation.mask.loadPixels(); //once per frame, so every ball can read the mask quickly.
     //*eat* shows the whole camera, so you can see yourself (and the flower can open behind you).
     //*ui* practice mode used to mask you out of the video, which left a white shape where you were. now both
     //modes show you. the mask is still used to find the balls on your body and to put the flower behind you.
@@ -544,7 +566,9 @@ function draw() {
       video.width * fit.scale,
       video.height * fit.scale,
     );
-
+  }
+  if (segmentation && fit) {
+    segmentation.mask.loadPixels(); //once per frame, so every ball can read the mask quickly.
     //*flower* passed a level: a flower opens behind you, drawn over the room but not over you.
     if (flowerShowing()) {
       drawFlower(fit);
@@ -558,7 +582,7 @@ function draw() {
     if (flowerShowing()) {
       break;
     }
-    if (segmentation) {
+    if (segmentation && fit) {
       ball.onBody = ball.isOnBody(
         segmentation.mask,
         fit.scale,
@@ -585,6 +609,7 @@ function draw() {
   //*change* hand gesture recognition
   collectSample();
   guessSign();
+  shownLetter = steadyLetter(); //*letters*
   drawHand();
   drawSignPanel();
   drawHandLabel(); //*ui*
@@ -609,6 +634,56 @@ function toggleHelp() {
   helpButton.html(showHelp ? "Help: on" : "Help: off");
 }
 
+//*chart* shows or hides the alphabet chart.
+function toggleChart() {
+  showChart = !showChart;
+  chartButton.html(showChart ? "ABC: on" : "ABC: off");
+  if (showChart) {
+    chartBox.show();
+    placeChartBox();
+  } else {
+    chartBox.hide();
+  }
+}
+
+//*chart* makes the chart card once, in setup(). like the demo box, it's a page element on top of the canvas,
+//so the picture stays sharp and the card can scroll.
+//the chart: "ASL alphabet (Gallaudet), annotated", public domain, from Wikimedia Commons (see REFERENCES).
+function makeChartBox() {
+  chartBox = createDiv("");
+  chartBox.parent("sketch-holder");
+  chartBox.style("position", "absolute");
+  chartBox.style("box-sizing", "border-box");
+  chartBox.style("width", chartWidth + "px");
+  chartBox.style("padding", "10px");
+  chartBox.style("overflow-y", "auto"); //scrolls when the window is too short for the whole chart.
+  chartBox.style("border-radius", "22px 12px 26px 10px"); //uneven corners, like the other panels.
+  chartBox.style("background", "rgba(240, 235, 255, 0.92)");
+  chartBox.style("color", "rgb(70, 55, 120)");
+  chartBox.style("font-size", "11px");
+
+  let title = createDiv("<b>ASL ALPHABET</b> (palm forward unless the chart says otherwise)");
+  title.parent(chartBox);
+  title.style("margin-bottom", "6px");
+  let picture = createImg("asl-alphabet.svg", "The ASL alphabet A to Z and numbers 0 to 9, one drawn hand shape for each");
+  picture.parent(chartBox);
+  picture.style("width", "100%");
+  picture.style("display", "block");
+  let credit = createDiv("Chart: public domain, Wikimedia Commons");
+  credit.parent(chartBox);
+  credit.style("margin-top", "4px");
+
+  chartBox.hide();
+}
+
+//*chart* in practice mode it goes where the instructions are (they hide while it's open);
+//in game mode it goes under the game panel. it never runs off the bottom of the canvas: it scrolls instead.
+function placeChartBox() {
+  let top = gameOn ? panelTop + gamePanelHeight() + 12 : panelTop;
+  chartBox.position(16, top);
+  chartBox.style("max-height", max(120, height - top - 16) + "px");
+}
+
 //*ui* a panel with uneven corners that slowly wobble, like the balls pulse. call fill() first.
 function softPanel(x, y, w, h) {
   let t = pulseTime * 0.03;
@@ -630,7 +705,15 @@ function mousePressed(event) {
   userStartAudio(); //*sound* browsers block sound until the user clicks; this switches it on.
 
   //clicks on the pause button come here too. this skips them, so the ball under the button doesn't turn red.
-  if (event && (event.target === pauseButton.elt || event.target === gameButton.elt || event.target === helpButton.elt)) {
+  //*chart* clicks (or scrolls) on the chart card count as on a button too.
+  let onButton =
+    event &&
+    (event.target === pauseButton.elt ||
+      event.target === gameButton.elt ||
+      event.target === helpButton.elt ||
+      event.target === chartButton.elt ||
+      chartBox.elt.contains(event.target));
+  if (onButton) {
     return;
   }
 
@@ -673,7 +756,10 @@ function gotHands(results) {
     if (millis() - handLostTime > handSoundGap * 1000) {
       playSound(handSound);
     }
-    smoothHand = { keypoints: newPoints.map((point) => ({ x: point.x, y: point.y })) };
+    smoothHand = {
+      keypoints: newPoints.map((point) => ({ x: point.x, y: point.y })),
+      handedness: hands[0].handedness, //*letters*
+    };
     return;
   }
   //lerp moves each smoothed point part of the way (handSmoothing) towards where the hand is now.
@@ -681,6 +767,7 @@ function gotHands(results) {
     smoothHand.keypoints[i].x = lerp(smoothHand.keypoints[i].x, newPoints[i].x, handSmoothing);
     smoothHand.keypoints[i].y = lerp(smoothHand.keypoints[i].y, newPoints[i].y, handSmoothing);
   }
+  smoothHand.handedness = hands[0].handedness; //*letters* "Left" or "Right", so aslLetter() can tell which hand it is.
 }
 
 //*change* a fresh, empty sign model. ml5 works out the inputs and outputs from the examples you give it.
@@ -736,6 +823,118 @@ function collectSample() {
 function findCompliment(label) {
   return compliments.find((compliment) => compliment.key === label);
 }
+
+// ---------------------------------------------------------------------------
+// *letters* ASL ALPHABET LETTERS, WITH NO TEACHING NEEDED
+// translated from Python to JavaScript from gurkirat20's Sign_Language_Detection (main.py),
+// https://github.com/gurkirat20/Sign_Language_Detection
+// it uses MediaPipe's 21 hand points, and ml5's handPose is MediaPipe's hand model too, with the same point
+// numbers (0 = wrist, 4 = thumb tip, 8 = index tip, 12 = middle tip, 16 = ring tip, 20 = pinky tip).
+// it's a list of rules about where the fingertips are, so it knows A to Y without being taught
+// (not J or Z, since those letters move). it works best with your right hand, palm facing the camera.
+// ---------------------------------------------------------------------------
+let letterHistory = []; //the last few letters it read, so one odd frame doesn't change the letter shown.
+let lettersToKeep = 8;
+
+//which letter is this hand making? "" if it doesn't match any.
+function aslLetter(hand) {
+  let p = hand.keypoints;
+
+  //*fix* the rules were written for a RIGHT hand, palm facing the camera. a left hand is the mirror image, so every
+  //"is the thumb left or right of this finger" rule came out backwards. so a left hand is flipped left-right
+  //(around the wrist) first, to look like a right hand.
+  //(the hand model labels hands as if the camera picture were mirrored, and ours isn't, so "Right" means your left hand.)
+  if (hand.handedness === "Right") {
+    let wristX = p[0].x;
+    p = p.map((point) => ({ x: 2 * wristX - point.x, y: point.y }));
+  }
+
+  //*fix* the original's pixel distances (25 and 50) only suited one distance from the camera. now they grow and
+  //shrink with your hand: s is how big your hand looks (wrist to middle knuckle), compared to 90 pixels.
+  let s = dist(p[0].x, p[0].y, p[9].x, p[9].y) / 90;
+
+  //each finger (index, middle, ring, pinky): 1 = up, 0 = folded down, 0.5 = bent, 0.25 = pointing sideways.
+  //(a finger that matches none of these gets nothing, just like the original.)
+  let fingers = [];
+  let fingerJoint1 = [6, 10, 14, 18];
+  let fingerJoint2 = [7, 11, 15, 19];
+  let fingerTip = [8, 12, 16, 20];
+  for (let i = 0; i < 4; i++) {
+    let tip = p[fingerTip[i]];
+    let joint1 = p[fingerJoint1[i]];
+    let joint2 = p[fingerJoint2[i]];
+    if (tip.x + 25 * s < joint1.x && p[16].y < p[20].y) {
+      fingers.push(0.25);
+    } else if (tip.y > joint1.y) {
+      fingers.push(0);
+    } else if (tip.y < joint2.y) {
+      fingers.push(1);
+    } else if (tip.x > joint2.x && tip.x > joint1.x) {
+      fingers.push(0.5);
+    }
+  }
+  let count = (value) => fingers.filter((finger) => finger === value).length;
+
+  //the rules, checked in order. the first one that matches wins.
+  if (p[3].y > p[4].y && p[3].x > p[6].x && p[4].y < p[6].y && count(0) === 4) return "A";
+  if (p[3].x > p[4].x && count(1) === 4) return "B";
+  if (p[3].x > p[6].x && count(0.5) >= 1 && p[4].y > p[8].y) return "C";
+  if (fingers[0] === 1 && count(0) === 3 && p[3].x > p[4].x) return "D";
+  if (p[3].x < p[6].x && count(0) === 4 && p[12].y < p[4].y) return "E";
+  if (count(1) === 3 && fingers[0] === 0 && p[3].y > p[4].y) return "F";
+  if (fingers[0] === 0.25 && count(0) === 3) return "G";
+  if (fingers[0] === 0.25 && fingers[1] === 0.25 && count(0) === 2) return "H";
+  if (p[4].x < p[6].x && count(0) === 3) return fingers.length === 4 && fingers[3] === 1 ? "I" : "";
+  if (p[4].x < p[6].x && p[4].x > p[10].x && count(1) === 2) return "K";
+  if (fingers[0] === 1 && count(0) === 3 && p[3].x < p[4].x) return "L";
+  if (p[4].x < p[16].x && count(0) === 4) return "M";
+  if (p[4].x < p[12].x && count(0) === 4) return "N";
+  if (p[4].x > p[12].x && p[4].y < p[6].y && count(0) === 4) return "T";
+  if (p[4].x > p[12].x && p[4].y < p[12].y && count(0) === 4) return "S";
+  if (p[4].y < p[8].y && p[4].y < p[12].y && p[4].y < p[16].y && p[4].y < p[20].y) return "O";
+  if (fingers[2] === 0 && p[4].y < p[12].y && p[4].y > p[6].y) return fingers.length === 4 && fingers[3] === 0 ? "P" : "";
+  if (fingers[1] === 0 && fingers[2] === 0 && fingers[3] === 0 && p[8].y > p[5].y && p[4].y < p[1].y) return "Q";
+  if (p[8].x < p[12].x && count(1) === 2 && p[9].x > p[4].x) return "R";
+  if (p[4].x < p[6].x && p[4].x < p[10].x && count(1) === 2 && p[3].y > p[4].y && p[8].x - p[11].x <= 50 * s) return "U";
+  if (p[4].x < p[6].x && p[4].x < p[10].x && count(1) === 2 && p[3].y > p[4].y) return "V";
+  if (p[4].x < p[6].x && p[4].x < p[10].x && count(1) === 3) return "W";
+  if (fingers[0] === 0.5 && count(0) === 3 && p[4].x > p[6].x) return "X";
+  if (count(0) === 3 && p[3].x < p[4].x) return fingers.length === 4 && fingers[3] === 1 ? "Y" : "";
+  return "";
+}
+
+//the letter to show: only one that most of the last few readings agree on, so it doesn't flicker. "" if none.
+function steadyLetter() {
+  if (!smoothHand || !video || video.width === 0) {
+    letterHistory = [];
+    return "";
+  }
+  letterHistory.push(aslLetter(smoothHand));
+  if (letterHistory.length > lettersToKeep) {
+    letterHistory.shift(); //forget the oldest one.
+  }
+  let latest = letterHistory[letterHistory.length - 1];
+  let agreeing = letterHistory.filter((letter) => letter === latest).length;
+  return latest !== "" && agreeing * 2 > letterHistory.length ? latest : "";
+}
+
+//*letters* what the hand is signing right now, for the label above your hand and the demo box:
+//a compliment you taught it comes first, then a letter you taught it (it learned those from your own hand,
+//so it's more accurate), then an alphabet letter from the rules above. null if none.
+function currentHandSign() {
+  let compliment = currentCompliment();
+  if (compliment) {
+    return { label: compliment.emoji, words: compliment.sentence };
+  }
+  if (modelState === "ready" && shownGuess && shownGuess.confidence >= complimentConfidence) {
+    return { label: shownGuess.label, words: shownGuess.label };
+  }
+  if (shownLetter) {
+    return { label: shownLetter, words: shownLetter };
+  }
+  return null;
+}
+let shownLetter = ""; //the steady letter this frame. draw() updates it once per frame, in practice mode.
 
 //*change* the compliment it's showing right now, but only if it's sure enough. otherwise undefined.
 function currentCompliment() {
@@ -908,7 +1107,8 @@ function drawSignPanel() {
   noStroke();
   textAlign(LEFT, TOP);
 
-  if (showHelp) {
+  //*chart* the alphabet chart sits where the instructions go, so they hide while it's open.
+  if (showHelp && !showChart) {
     //worked out first, so the compliment guide can go right under it. a warning is long, so it gets room for 2 lines.
     let boxHeight = 44 + lines.length * 19 + (warning ? 19 : 0);
     fill(...gamePaper, panelAlpha);
@@ -1028,6 +1228,7 @@ function toggleGame() {
     demoViewer.removeAttribute("src");
   }
   placeDemoBox(); //*ui* the box sits in a different spot in each mode.
+  placeChartBox(); //*chart* so does the chart.
 }
 
 function startGame() {
@@ -1168,28 +1369,28 @@ function updatePracticeDemo() {
     return;
   }
   demoBox.show();
-  if (modelState === "ready" && shownGuess) {
-    let compliment = findCompliment(shownGuess.label);
-    let words = compliment ? compliment.sentence : shownGuess.label; //a compliment's sentence, or the letter.
-    if (words !== demoWords) {
-      showSign(words);
+  let sign = currentHandSign(); //*letters*
+  if (sign) {
+    if (sign.words !== demoWords) {
+      showSign(sign.words);
     }
   } else if (demoWords === "") {
-    demoCaption.html("Teach it some signs, then make one: its real ASL sign will show up here.");
+    demoCaption.html("Make an alphabet letter (A to Y) or a compliment you taught it: its real ASL sign will show up here.");
   }
 }
 
 //*ui* the sign it recognises, in a bubble just above your hand, so it follows your hand around.
 function drawHandLabel() {
-  if (!showHelp || modelState !== "ready" || !shownGuess || !smoothHand || !video || video.width === 0) {
+  let sign = currentHandSign(); //*letters*
+  if (!showHelp || !sign || !smoothHand || !video || video.width === 0) {
     return;
   }
   let fit = videoFit();
   let middle = handMiddle();
   //the top of the hand is its highest point (the smallest y).
   let handTop = min(smoothHand.keypoints.map((point) => point.y)) * fit.scale + fit.offsetY;
-  let compliment = findCompliment(shownGuess.label);
-  let label = compliment ? compliment.emoji : shownGuess.label;
+  let isEmoji = sign.label !== sign.words; //a compliment shows its emoji; a letter shows the letter.
+  let label = sign.label;
   let x = middle.x;
   let y = max(36, handTop - 40); //above the hand, but never off the top of the canvas.
 
@@ -1200,7 +1401,7 @@ function drawHandLabel() {
   fill(...gameInk);
   textAlign(CENTER, CENTER);
   textStyle(BOLD);
-  textSize(compliment ? 30 : 32);
+  textSize(isEmoji ? 30 : 32);
   text(label, x, y + 2);
   pop();
 }
