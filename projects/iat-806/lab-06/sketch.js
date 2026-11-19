@@ -10,8 +10,8 @@
 //   against a timer. finishing a sentence in time gives points, plus bonus points for the seconds left.
 // - *game* even smaller balls, in pastel light blue and light purple.
 // - *levels* the game has 3 levels: 1 single signs, 2 short sentences, 3 longer sentences from memory.
-// - *endless* after level 3 it never ends: it keeps making new levels of random signs and alphabet letters,
-//   each with more signs, less time and more points.
+// - *endless* after level 3 it never ends: each new level teaches a theme of words (Fruit, Drinks, ...), signing
+//   each word and then spelling its first letter. the themes come round again with no hints and less time.
 // - *api* in levels 1 and 2, a box shows the real ASL sign as a moving stick figure. it comes from sign.mt's free API.
 // - *eat* in game mode, each sign you finish eats some of the balls on your body (splice), from your hand outwards.
 //   they come back (push) for the next sentence.
@@ -31,6 +31,7 @@
 // - *numbers* the Read button switches practice mode to reading numbers 0 to 9.
 // - *notes* practice mode writes down what you sign (letters join into words). S saves the record, and the
 //   Notes button downloads your saved records as a .txt file.
+// - *tears* when face-api reads you as unhappy (sad, angry, scared or disgusted), the balls turn into falling teardrops.
 // - *simple* a simpler layout: buttons top-left (space bar pauses), one short help card on the left, and on the
 //   right the Notes button, what you've signed, and the real-sign box.
 //
@@ -65,6 +66,12 @@ let maxRadius = 3.5;
 let faceModels = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model"; //where its trained models are downloaded from.
 let smileTarget = 0; //how much you're smiling in the latest check, 0 to 1 (face-api's "happy" score).
 let smile = 0; //the same, but eased towards smileTarget every frame, so the balls brighten smoothly instead of flickering.
+//*tears* when you look unhappy, the balls turn into falling teardrops, like rain.
+let sadTarget = 0; //how unhappy you look in the latest check, 0 to 1 (face-api's sad + angry + fearful + disgusted).
+let sadness = 0; //the same, eased every frame.
+let sadThreshold = 0.3; //how unhappy you have to look (0 to 1) before the rain starts.
+let dripLength = 40; //how far (in pixels) each drop falls before it starts again at its spot.
+let rainBlue = [110, 170, 255]; //the colour the drops turn as they fill up.
 let smileChecksPerSecond = 10; //how often it looks for your smile. a smile doesn't need more, and it leaves the computer free for hand tracking.
 let flowerPetals = 5; //how many petals each little ball-flower has when it blooms.
 let flowerSize = 1.7; //how big the open flowers are. 1 = a little bigger than the ball; 2 = they start to touch.
@@ -253,60 +260,115 @@ let levels = [
 ];
 
 // ---------------------------------------------------------------------------
-// *endless* after the 3 levels above, the game keeps going: each new level is made up on the spot,
-// with random mixes of the signs above and fingerspelled alphabet letters. every level gets a bit harder:
-// more signs in each sentence, less time, more points, and from level 6 the hints are hidden.
-// the idea of an endless random practice comes from Gesture Academy's "Random Numbers" game,
+// *endless* after the 3 levels above, the game keeps going with WORDS, one theme per level
+// (Fruit, Drinks, Animals, Feelings, Family). each word is 2 steps: sign the word, then fingerspell its
+// first letter (like APPLE, then A). the real-sign box shows the real sign for each word.
+// once you've done every theme, they come round again: no hints, less time, more points. so it never ends.
+// the idea of endless practice comes from Gesture Academy's "Random Numbers" game,
 // https://github.com/Narottam04/SignLanguage (MIT license). no code was copied from it.
+// like the levels above, the game only checks the HAND SHAPE of each sign (shape: or letter:),
+// and the "how" text says what the real sign does (movement, where it goes).
 // ---------------------------------------------------------------------------
 let mainLevels = levels.length; //the 3 written-out levels. levels after these are endless ones.
 
-//the alphabet letters the endless levels use. they're checked by aslLetter() (see *letters*), so these are the
-//ones with clear finger patterns, which it reads most reliably. letter: true tells the game to check the letter.
-let letterSigns = [
-  { sign: "letter B", letter: "B", emoji: "B", how: "flat hand, fingers together and up, thumb folded across your palm" },
-  { sign: "letter D", letter: "D", emoji: "D", how: "index finger up, the other fingertips touch your thumb" },
-  { sign: "letter I", letter: "I", emoji: "I", how: "pinky up, the other fingers in a fist, thumb across them" },
-  { sign: "letter L", letter: "L", emoji: "L", how: "index finger up and thumb out to the side, like an L" },
-  { sign: "letter V", letter: "V", emoji: "V", how: "index and middle fingers up in a V, thumb holds the others down" },
-  { sign: "letter W", letter: "W", emoji: "W", how: "index, middle and ring fingers up, thumb holds your pinky down" },
-  { sign: "letter Y", letter: "Y", emoji: "Y", how: "thumb and pinky out, the other fingers folded" },
+//how to fingerspell each letter the words start with. letter: tells the game to check it with the letter rules.
+let letterHow = {
+  A: "fist, with your thumb up along the side of your index finger",
+  B: "flat hand, fingers together and up, thumb folded across your palm",
+  C: "curve your hand like the letter C",
+  D: "index finger up, the other fingertips touch your thumb",
+  F: "thumb and index finger touch in a circle, the other 3 fingers up",
+  G: "index finger and thumb point sideways, like pinching something flat",
+  H: "index and middle fingers together, pointing sideways",
+  L: "index finger up and thumb out, like an L",
+  M: "fist with your thumb tucked under your first 3 fingers",
+  O: "all your fingertips curve round to touch your thumb, like an O",
+  S: "fist with your thumb across the front of your fingers",
+  T: "fist with your thumb tucked between your index and middle fingers",
+  W: "index, middle and ring fingers up, thumb holds your pinky down",
+};
+
+//the step for fingerspelling one letter.
+function spellStep(letter) {
+  return { sign: "spell " + letter, letter: letter, emoji: letter, how: letterHow[letter] };
+}
+
+//the themes. each word: its sign (checked by shape: or by the letter its hand shape matches), an emoji, and how.
+let themes = [
+  {
+    name: "Fruit",
+    words: [
+      { sign: "APPLE", letter: "X", emoji: "\u{1F34E}", how: "X hand (index finger bent like a hook): twist its knuckle on your cheek" },
+      { sign: "BANANA", shape: "point", emoji: "\u{1F34C}", how: "index finger up (your other hand peels down it, like a banana)" },
+      { sign: "ORANGE", letter: "S", emoji: "\u{1F34A}", how: "a fist at your chin that squeezes open and closed" },
+      { sign: "FRUIT", letter: "F", emoji: "\u{1F353}", how: "F hand (thumb and index touch, 3 fingers up): twist it on your cheek" },
+    ],
+  },
+  {
+    name: "Drinks",
+    words: [
+      { sign: "CUP", letter: "C", emoji: "\u{1F964}", how: "C hand, sitting on your other flat palm" },
+      { sign: "WATER", letter: "W", emoji: "\u{1F4A7}", how: "W hand (3 fingers up): tap your index finger on your chin" },
+      { sign: "MILK", shape: "fist", emoji: "\u{1F95B}", how: "a fist that squeezes open and closed, like milking" },
+      { sign: "COFFEE", shape: "fist", emoji: "\u{2615}", how: "a fist that grinds in circles on top of your other fist" },
+      { sign: "TEA", letter: "F", emoji: "\u{1F375}", how: "thumb and index pinched (like F): dip and stir into your other hand" },
+    ],
+  },
+  {
+    name: "Animals",
+    words: [
+      { sign: "CAT", letter: "F", emoji: "\u{1F431}", how: "F hand at your cheek: pull it out, like stroking whiskers" },
+      { sign: "DOG", shape: "flat", emoji: "\u{1F436}", how: "flat hand: pat your leg (then snap), like calling a dog" },
+      { sign: "BIRD", letter: "G", emoji: "\u{1F426}", how: "G hand at your mouth: index and thumb open and close like a beak" },
+      { sign: "FISH", shape: "flat", emoji: "\u{1F41F}", how: "flat hand sideways, wiggling forward like a swimming fish" },
+    ],
+  },
+  {
+    name: "Feelings",
+    words: [
+      { sign: "HAPPY", shape: "flat", emoji: "\u{1F60A}", how: "flat hand: brush up your chest, twice" },
+      { sign: "SAD", shape: "flat", emoji: "\u{1F622}", how: "open hand: slide it down in front of your face" },
+      { sign: "LOVE", shape: "fist", emoji: "\u{2764}\u{FE0F}", how: "fists crossed over your heart" },
+      { sign: "GOOD", shape: "flat", emoji: "\u{1F44D}", how: "flat hand: from your chin, move it forward and down" },
+    ],
+  },
+  {
+    name: "Family",
+    words: [
+      { sign: "MOM", shape: "flat", emoji: "\u{1F469}", how: "open hand, fingers spread: tap your thumb on your chin" },
+      { sign: "DAD", shape: "flat", emoji: "\u{1F468}", how: "open hand, fingers spread: tap your thumb on your forehead" },
+      { sign: "FRIEND", letter: "X", emoji: "\u{1F91D}", how: "X hands (bent index fingers): hook them together, then swap" },
+      { sign: "HOME", letter: "O", emoji: "\u{1F3E0}", how: "fingertips together (flat O): touch your mouth, then your cheek" },
+    ],
+  },
 ];
 
-//makes endless level number n (4, 5, 6, ...).
+//makes endless level number n (4, 5, 6, ...): the next theme, one word per "sentence".
 function makeEndlessLevel(n) {
-  let extra = n - mainLevels; //1 for level 4, 2 for level 5, ...
-  let pool = Object.values(signs).concat(letterSigns); //every sign it can choose from.
-  let signsEach = min(5, 2 + floor(extra / 2)); //2 signs, then 3, 4, and at most 5.
-  let sentences = [];
-  for (let i = 0; i < 4; i++) {
-    let steps = [];
-    while (steps.length < signsEach) {
-      let pick = random(pool);
-      //never the same sign twice in a row, or holding it once would finish both.
-      if (steps.length === 0 || steps[steps.length - 1] !== pick) {
-        steps.push(pick);
-      }
-    }
-    //the "sentence" is the signs in order, like "HELP · letter B · YOU".
-    sentences.push({ sentence: steps.map((step) => step.sign).join(" · "), steps: steps });
-  }
+  let extra = n - mainLevels - 1; //0 for level 4, 1 for level 5, ...
+  let theme = themes[extra % themes.length];
+  let lap = floor(extra / themes.length); //0 the first time through the themes, 1 the second time, ...
+  let sentences = theme.words.map((word) => ({
+    sentence: word.sign.charAt(0) + word.sign.slice(1).toLowerCase(), //"APPLE" -> "Apple"
+    demo: word.sign.toLowerCase(), //what the real-sign box asks sign.mt for.
+    steps: [word, spellStep(word.sign.charAt(0))], //sign the word, then spell its first letter.
+  }));
   return {
-    name: "Endless " + n,
-    seconds: max(8, 20 - extra * 1.5), //less time each level, but never under 8 seconds.
-    points: 200 + extra * 50,
-    showHow: n < 6, //from level 6, from memory.
-    showDemo: false, //random mixes aren't real sentences, so there's no real-sign demo for them.
+    name: theme.name,
+    seconds: lap === 0 ? 20 : max(8, 15 - (lap - 1) * 2), //less time each time round, but never under 8 seconds.
+    points: 200 + extra * 25,
+    showHow: lap === 0, //the first time through, it shows how; after that, from memory.
+    showDemo: lap === 0, //and the real-sign box only shows the first time, too.
     sentences: sentences,
   };
 }
 
-//how the level is named on the panel: "LEVEL 2 of 3" for the written ones, "LEVEL 5 · endless" after them.
+//how the level is named on the panel: "LEVEL 2 of 3" for the written ones, "LEVEL 5 · Drinks" after them.
 function levelTitle() {
   if (levelIndex < mainLevels) {
     return "LEVEL " + (levelIndex + 1) + " of " + mainLevels;
   }
-  return "LEVEL " + (levelIndex + 1) + " · endless";
+  return "LEVEL " + (levelIndex + 1) + " · " + levels[levelIndex].name;
 }
 
 //is the hand making this step's sign? a letter is checked with the alphabet rules, the rest by hand shape.
@@ -420,6 +482,9 @@ async function checkSmile() {
         .withFaceExpressions();
       //no face found: no smile.
       smileTarget = face ? face.expressions.happy : 0;
+      //*tears* the unhappy expressions added together (they can't go over 1, since all 7 expressions add up to 1).
+      let e = face ? face.expressions : null;
+      sadTarget = e ? e.sad + e.angry + e.fearful + e.disgusted : 0;
     } catch (error) {
       console.warn("smile check didn't work this time:", error);
     }
@@ -672,6 +737,7 @@ function draw() {
   }
 
   smile = lerp(smile, smileTarget, 0.1); //*smile*
+  sadness = lerp(sadness, sadTarget, 0.1); //*tears*
 
   for (let ball of myBalls) {
     //*flower* the balls are turned off while the flower is open. they come back with the next level.
@@ -2148,7 +2214,9 @@ function drawLevelDone(left, top, panelWidth, panelHeight) {
     next = "Not quite half yet. Press Enter to try level " + (levelIndex + 1) + " again.";
   } else if (levelIndex + 1 >= mainLevels) {
     //*endless* from level 3 on, the next level is a new endless one.
-    next = "Level passed! Press Enter for endless level " + (levelIndex + 2) + ": more signs, less time.";
+    //*endless* says which theme of words comes next.
+    let nextTheme = themes[(levelIndex + 1 - mainLevels) % themes.length].name;
+    next = "Level passed! Press Enter for level " + (levelIndex + 2) + ": words about " + nextTheme + ".";
   } else {
     next = "Level passed! Press Enter for level " + (levelIndex + 2) + ".";
   }
@@ -2186,6 +2254,11 @@ class Ball {
     this.bloom = 0; //0 = a closed bud (it looks like a ball), 1 = wide open.
     this.bloomSpeed = random(0.04, 0.15); //each one opens at its own speed, so they ripple open instead of all at once.
     this.turn = random(TWO_PI); //each one is turned a different way, so they don't all look the same.
+
+    //*tears* each ball can also become a teardrop that slides down and starts again, like rain.
+    this.tear = 0; //0 = a ball (or flower), 1 = a full teardrop.
+    this.dripSpeed = random(0.6, 1.6); //how fast its drop falls, in pixels a frame.
+    this.dripStart = random(dripLength); //where in its fall it starts, so they don't all fall together.
 
     //*eat* eating.
     this.eaten = false; //eatBalls() sets this. the ball shrinks away, then gets removed from the array.
@@ -2256,6 +2329,9 @@ class Ball {
     this.bodyAmount = lerp(this.bodyAmount, this.onBody ? 1 : 0, 0.3); //*change*
     this.grow = lerp(this.grow, this.eaten ? 0 : 1, 0.15); //*eat*
     this.bloom = lerp(this.bloom, smile, this.bloomSpeed); //*smile* opens as you smile, closes when you stop.
+    //*tears* turns into a teardrop when you look unhappy (and more unhappy than happy), and back when you don't.
+    let crying = sadness > sadThreshold && sadness > smile;
+    this.tear = lerp(this.tear, crying ? sadness : 0, this.bloomSpeed);
 
     if (this.clicked || this.bodyAmount > 0.5) {
       this.highlight();
@@ -2276,11 +2352,42 @@ class Ball {
     this.brightRGB = this.brightOriginal;
   }
 
+  //*tears* a teardrop: round at the bottom and pointed at the top. it slides down from its spot, fading out,
+  //then starts again, so all of them together look like rain. the more unhappy you look, the bigger and bluer.
+  showTear(r) {
+    let ctx = drawingContext; //the canvas's own drawing commands, for speed (see the flowers below).
+    //how far down it has slid: counts up with the pulse clock (so pausing freezes the rain), and starts again at dripLength.
+    let fall = ((pulseTime * this.dripSpeed + this.dripStart) % dripLength) * this.tear;
+    let x = this.x;
+    let y = this.y + fall;
+    let s = r * (0.8 + 0.9 * this.tear); //the round part's radius.
+
+    let dropRed = lerp(this.rgb[0], rainBlue[0], this.tear);
+    let dropGreen = lerp(this.rgb[1], rainBlue[1], this.tear);
+    let dropBlue = lerp(this.rgb[2], rainBlue[2], this.tear);
+    let fade = 1 - fall / (dripLength + 1); //fades out as it falls.
+    let alpha = (this.bodyAmount > 0.5 ? 0.45 : 1) * fade; //see-through on you, like the flowers.
+    ctx.fillStyle = "rgba(" + dropRed + "," + dropGreen + "," + dropBlue + "," + alpha + ")";
+
+    ctx.beginPath();
+    ctx.moveTo(x, y - s * 2.2); //the point at the top.
+    ctx.bezierCurveTo(x + s * 0.2, y - s * 1.2, x + s, y - s * 0.6, x + s, y); //down the right side.
+    ctx.arc(x, y, s, 0, PI); //round the bottom.
+    ctx.bezierCurveTo(x - s, y - s * 0.6, x - s * 0.2, y - s * 1.2, x, y - s * 2.2); //back up the left side.
+    ctx.fill();
+  }
+
   //*smile* a closed bud is just a ball. as it blooms, its petals spread out from the middle,
   //get brighter, and a yellow centre shows.
   show() {
     let r = this.size();
     noStroke();
+
+    //*tears* unhappy: a teardrop instead of a flower.
+    if (this.tear > 0.02 && this.tear > this.bloom) {
+      this.showTear(r);
+      return;
+    }
 
     //closed: one circle. (this also saves time, since drawing petals for thousands of balls is slow.)
     if (this.bloom < 0.02) {

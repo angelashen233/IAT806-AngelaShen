@@ -107,11 +107,12 @@
       <h3>How to use it</h3>
       <ul>
         <li>Sign a letter and it floats above your hand. <b>Read: 123</b> switches to numbers 0 to 9.</li>
-        <li>What you sign is written along the bottom: hold a sign for a moment to add it, and lower your hand
+        <li>What you sign is written in the top-right corner: hold a sign for a moment to add it, and lower your hand
           for a second to start a new word. Press <b>S</b> to save that record, and the <b>Notes</b> button
-          (bottom right) downloads your saved records as a .txt file.</li>
+          (top right) downloads your saved records as a .txt file.</li>
         <li><b>Fix</b> pauses everything so you can teach it how your hand makes a letter it gets wrong.</li>
-        <li><b>Chart</b> shows the ASL alphabet, and <b>Game</b> starts the levels, which never end after level 3.</li>
+        <li><b>Chart</b> shows the ASL alphabet, and <b>Game</b> starts the levels. After level 3 they never end:
+          each one teaches a theme of words. The space bar pauses.</li>
       </ul>
 
       <h3>How accurate is the AI?</h3>
@@ -127,19 +128,24 @@
       <h3>Sources</h3>
       <ul>
         <li>
-          <a href="https://p5js.org/">p5.js</a> and
-          <a href="https://github.com/processing/p5.sound.js">p5.sound</a>, for drawing and sound.
+          <a href="https://p5js.org/">p5.js</a> 2.3.3 and
+          <a href="https://github.com/processing/p5.sound.js">p5.sound</a> 0.4.1, for drawing and sound.
         </li>
         <li>
-          <a href="https://ml5js.org/">ml5.js</a>: body segmentation, hand tracking (handPose, which uses MediaPipe
-          Hands) and the neural network for signs you teach it. Body segmentation is based on the ml5.js example
+          <a href="https://ml5js.org/">ml5.js</a> 1.4.0: body segmentation, hand tracking (handPose, which uses
+          <a href="https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker">MediaPipe Hands</a>) and the
+          neural network for signs you teach it. Body segmentation is based on the ml5.js example
           <a href="https://editor.p5js.org/ml5/sketches/h6TN8umP5">bodySegmentation-mask-person</a>.
         </li>
         <li>
           Smile tracking: <a href="https://justadudewhohacks.github.io/face-api.js/docs/index.html">face-api.js</a>
           by Vincent Mühler, loaded through
-          <a href="https://github.com/vladmandic/face-api">@vladmandic/face-api</a> (an updated version that works
-          alongside ml5).
+          <a href="https://github.com/vladmandic/face-api">@vladmandic/face-api</a> 1.7.15 (an updated version that
+          works alongside ml5).
+        </li>
+        <li>
+          ml5.js and face-api.js both run on Google's <a href="https://www.tensorflow.org/js">TensorFlow.js</a>, which
+          comes built into them.
         </li>
         <li>
           Practice mode letters: the trained model from
@@ -152,10 +158,10 @@
         </li>
         <li>
           Real ASL sign animations: <a href="https://sign.mt/">sign.mt</a>, played with
-          <a href="https://www.npmjs.com/package/pose-viewer">pose-viewer</a>.
+          <a href="https://www.npmjs.com/package/pose-viewer">pose-viewer</a> 1.2.0.
         </li>
         <li>
-          ASL alphabet chart (the ABC button): public domain, from
+          ASL alphabet chart (the Chart button): public domain, from
           <a href="https://commons.wikimedia.org/wiki/File:Asl_alphabet_gallaudet_ann.svg">Wikimedia Commons</a>.
         </li>
         <li>
@@ -169,6 +175,9 @@
         <li>
           Sound effects: "level up" by universfield, "magical sparkle whoosh" by djartmusic and "fairy dust magical
           chime" by emand_edroff, from <a href="https://pixabay.com/sound-effects/">Pixabay</a>.
+        </li>
+        <li>
+          Font: <a href="https://fonts.google.com/specimen/Poppins">Poppins</a>, from Google Fonts.
         </li>
       </ul>
       <nav>
